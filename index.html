@@ -3,43 +3,68 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 完整功能修復版</title>
+  <title>射箭 Pro AI - 介面還原版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
-    body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-    .controls { display: flex; gap: 10px; padding: 15px; flex-wrap: wrap; justify-content: center; background: #222; width: 100%; border-bottom: 2px solid #00FF00; }
-    button, label { background: #333; color: #00FF00; padding: 12px 18px; border-radius: 8px; border: 1px solid #00FF00; cursor: pointer; font-size: 14px; font-weight: bold; }
-    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 95%; max-width: 600px; margin: 15px 0; }
-    .data-card { background: #2a2a2a; padding: 12px; border-radius: 10px; text-align: center; border-left: 4px solid #00FF00; }
-    .data-label { font-size: 12px; color: #aaa; }
-    .data-value { font-size: 20px; font-weight: bold; }
-    .canvas-container { position: relative; width: 95%; max-width: 640px; }
-    canvas { width: 100%; border-radius: 12px; background: #000; }
-    video { display: none; }
+    body { margin: 0; background: #121212; color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; align-items: center; }
+    
+    /* 上方控制列 */
+    .controls { display: flex; gap: 10px; padding: 20px 10px; width: 100%; justify-content: center; }
+    .btn { background: #333; color: white; padding: 10px 15px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 5px; }
     #upload-input { display: none; }
-    .status-msg { position: absolute; top: 20px; width: 100%; text-align: center; font-weight: bold; color: #FF3B30; z-index: 10; font-size: 32px; text-shadow: 2px 2px 4px #000; pointer-events: none; }
+
+    /* 四宮格儀表板 */
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 92%; margin-bottom: 15px; }
+    .data-card { 
+      background: #222; padding: 15px; border-radius: 12px; text-align: center; 
+      border: 1px solid #00FF00; box-shadow: 0 0 10px rgba(0, 255, 0, 0.2);
+    }
+    .data-label { font-size: 13px; color: #aaa; margin-bottom: 5px; }
+    .data-value { font-size: 24px; font-weight: bold; color: #fff; }
+
+    /* 影片區域 */
+    .canvas-container { position: relative; width: 92%; max-width: 640px; border-radius: 20px; overflow: hidden; border: 2px solid #333; }
+    canvas { width: 100%; display: block; background: #000; }
+    video { display: none; }
+
+    /* 載入遮罩 - 匹配截圖 */
+    #loading-overlay {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.8); padding: 20px; border-radius: 15px;
+      border: 2px solid #00FF00; text-align: center; z-index: 100;
+      width: 60%; display: none;
+    }
+    .spin { animation: rotation 2s infinite linear; display: inline-block; }
+    @keyframes rotation { from { transform: rotate(0deg); } to { transform: rotate(359deg); } }
+
+    .release-hint { position: absolute; top: 20px; width: 100%; text-align: center; color: #FF3B30; font-size: 32px; font-weight: bold; pointer-events: none; }
   </style>
 </head>
 <body>
 
   <div class="controls">
-    <button onclick="switchCamera()">🔄 切換鏡頭</button>
-    <label for="upload-input">📁 上傳分析影片</label>
+    <button class="btn" onclick="switchCamera()">🔄 切換鏡頭</button>
+    <label class="btn" for="upload-input">📁 上傳影片</label>
     <input type="file" id="upload-input" accept="video/*" onchange="loadVideo(event)">
-    <button onclick="location.reload()">🔴 重設即時模式</button>
+    <button class="btn" onclick="location.reload()"><span style="color:red">●</span> 即時模式</button>
   </div>
   
   <div class="dashboard">
     <div class="data-card"><div class="data-label">後手肘角度</div><div id="elbow-val" class="data-value">--°</div></div>
-    <div class="data-card"><div class="data-label">開弓直線度</div><div id="align-val" class="data-value">--%</div></div>
-    <div class="data-card"><div class="data-label">軀幹垂直</div><div id="torso-val" class="data-value">--°</div></div>
-    <div class="data-card"><div class="data-label">頭部狀態</div><div id="head-val" class="data-value">--</div></div>
+    <div class="data-card"><div class="data-label">軀幹垂直度</div><div id="torso-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">左膝角度</div><div id="lknee-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">右膝角度</div><div id="rknee-val" class="data-value">--°</div></div>
   </div>
 
   <div class="canvas-container">
-    <div id="release-msg" class="status-msg"></div>
+    <div id="loading-overlay">
+      <div class="spin" style="font-size: 30px;">⚙️</div>
+      <div style="margin-top: 10px; font-weight: bold;">AI 高速分析中...</div>
+      <div style="font-size: 12px; color: #aaa;">請稍候數秒</div>
+    </div>
+    <div id="release-msg" class="release-hint"></div>
     <video class="input_video" playsinline muted crossorigin="anonymous"></video>
     <canvas class="output_canvas"></canvas>
   </div>
@@ -48,89 +73,63 @@
     const videoElement = document.querySelector('.input_video');
     const canvasElement = document.querySelector('.output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
+    const loadingOverlay = document.getElementById('loading-overlay');
     const releaseMsg = document.getElementById('release-msg');
     
     let camera = null;
     let currentFacingMode = "environment";
     let lastResults = null;
-    let frameCounter = 0;
-    const FRAME_SKIP = 3; 
-
-    // 邏輯變數
-    let lastElbowX = 0;
-    let baseHeadPos = null;
+    let isProcessing = false;
 
     function calculateAngle(a, b, c) {
       if(!a || !b || !c) return 0;
       const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
       let angle = Math.abs(radians * 180.0 / Math.PI);
       if (angle > 180.0) angle = 360 - angle;
-      return angle;
+      return Math.round(angle);
     }
 
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
 
-    pose.setOptions({
-      modelComplexity: 0,
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
+    pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
     pose.onResults((results) => {
       lastResults = results;
-      if (results.poseLandmarks) {
-        updateAnalysis(results.poseLandmarks);
+      if (isProcessing) {
+        loadingOverlay.style.display = 'none';
+        isProcessing = false;
       }
+      updateUI(results.poseLandmarks);
     });
 
-    function updateAnalysis(lm) {
-      // 1. 判斷慣用手 (以手肘位置較高者為後手)
-      const isRightHanded = lm[14].y < lm[13].y; 
-      const backElbow = isRightHanded ? lm[14] : lm[13];
-      const backShoulder = isRightHanded ? lm[12] : lm[11];
-      const backWrist = isRightHanded ? lm[16] : lm[15];
-
-      // 2. 計算後手肘角度
-      const elbowAngle = calculateAngle(backShoulder, backElbow, backWrist);
+    function updateUI(lm) {
+      if (!lm) return;
       
-      // 3. 計算直線度 (肩膀與手肘的水平偏差)
-      const alignmentError = Math.abs(backElbow.y - backShoulder.y);
-      const alignScore = Math.max(0, Math.round(100 - alignmentError * 600));
-
-      // 4. 軀幹垂直度 (肩膀中點到髖部中點)
+      // 1. 後手肘 (依肩部高度判定)
+      const isRight = lm[14].y < lm[13].y;
+      const elbow = calculateAngle(lm[isRight?12:11], lm[isRight?14:13], lm[isRight?16:15]);
+      
+      // 2. 軀幹角度
       const sMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
       const hMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
-      const torsoAngle = calculateAngle({x: sMid.x, y: 0}, sMid, hMid);
+      const torso = calculateAngle({x: sMid.x, y: 0}, sMid, hMid);
 
-      // 5. 頭部穩定度
-      if (!baseHeadPos) baseHeadPos = lm[0].y;
-      const headStatus = Math.abs(lm[0].y - baseHeadPos) > 0.03 ? "⚠️ 晃動" : "✅ 穩定";
+      // 3. 膝蓋角度
+      const lKnee = calculateAngle(lm[23], lm[25], lm[27]);
+      const rKnee = calculateAngle(lm[24], lm[26], lm[28]);
 
-      // 6. 撒放偵測
-      if (lastElbowX !== 0 && Math.abs(backElbow.x - lastElbowX) > 0.04) {
-        releaseMsg.innerText = "💥 RELEASE!";
-        setTimeout(() => { releaseMsg.innerText = ""; }, 1000);
-      }
-      lastElbowX = backElbow.x;
-
-      // 更新 UI
-      document.getElementById('elbow-val').innerText = Math.round(elbowAngle) + "°";
-      document.getElementById('align-val').innerText = alignScore + "%";
-      document.getElementById('torso-val').innerText = Math.round(torsoAngle) + "°";
-      document.getElementById('head-val').innerText = headStatus;
+      document.getElementById('elbow-val').innerText = elbow + "°";
+      document.getElementById('torso-val').innerText = torso + "°";
+      document.getElementById('lknee-val').innerText = lKnee + "°";
+      document.getElementById('rknee-val').innerText = rKnee + "°";
     }
 
-    function draw() {
-      // 只有在影片有數據時才繪製
+    function drawLoop() {
       if (videoElement.readyState >= 2) {
-        if (canvasElement.width !== videoElement.videoWidth) {
-          canvasElement.width = videoElement.videoWidth;
-          canvasElement.height = videoElement.videoHeight;
-        }
-
+        canvasElement.width = videoElement.videoWidth;
+        canvasElement.height = videoElement.videoHeight;
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
@@ -140,13 +139,9 @@
           drawLandmarks(canvasCtx, lastResults.poseLandmarks, {color: '#FFFFFF', radius: 1});
         }
         canvasCtx.restore();
-
-        frameCounter++;
-        if (frameCounter % FRAME_SKIP === 0) {
-          pose.send({ image: videoElement });
-        }
+        pose.send({ image: videoElement });
       }
-      requestAnimationFrame(draw);
+      requestAnimationFrame(drawLoop);
     }
 
     async function loadVideo(event) {
@@ -154,27 +149,23 @@
       if (!file) return;
       if (camera) { await camera.stop(); camera = null; }
       
+      isProcessing = true;
+      loadingOverlay.style.display = 'block';
       videoElement.src = URL.createObjectURL(file);
-      videoElement.onloadeddata = () => {
-        videoElement.play();
-        baseHeadPos = null; // 上傳新影片重置參考點
-      };
+      videoElement.onloadeddata = () => videoElement.play();
     }
 
     async function startCamera() {
       camera = new Camera(videoElement, {
-        onFrame: async () => {}, // 統一由 draw 處理
+        onFrame: async () => {},
         facingMode: currentFacingMode,
-        width: 640,
-        height: 480
+        width: 640, height: 480
       });
       camera.start();
+      drawLoop();
     }
 
-    window.onload = () => {
-      startCamera();
-      draw(); // 啟動繪圖循環
-    };
+    window.onload = startCamera;
 
     function switchCamera() {
       currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
