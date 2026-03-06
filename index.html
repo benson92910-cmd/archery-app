@@ -2,25 +2,32 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>射箭全方位分析 - 程式夥伴</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
-    body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-    canvas { width: 100%; max-width: 640px; border-radius: 15px; margin-top: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+    body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; overflow-x: hidden; }
+    .header { padding: 15px; font-size: 20px; font-weight: bold; color: #00FF00; }
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; width: 95%; max-width: 600px; }
+    .data-card { background: #333; padding: 10px; border-radius: 8px; text-align: center; border-bottom: 3px solid #00FF00; }
+    .data-label { font-size: 12px; color: #aaa; margin-bottom: 5px; }
+    .data-value { font-size: 18px; font-weight: bold; }
+    canvas { width: 95%; max-width: 640px; border-radius: 10px; margin-top: 10px; border: 2px solid #444; }
     video { display: none; }
-    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 15px; width: 100%; max-width: 600px; }
-    .data-card { background: #333; padding: 10px; border-radius: 8px; text-align: center; border-left: 4px solid #00FF00; }
-    .data-label { font-size: 12px; color: #aaa; }
-    .data-value { font-size: 20px; font-weight: bold; }
   </style>
 </head>
 <body>
+  <div class="header">射箭動作分析系統</div>
+  
   <div class="dashboard">
     <div class="data-card"><div class="data-label">後手肘角度</div><div id="elbow-val" class="data-value">--°</div></div>
     <div class="data-card"><div class="data-label">軀幹垂直度</div><div id="torso-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">左膝角度</div><div id="lknee-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">右膝角度</div><div id="rknee-val" class="data-value">--°</div></div>
   </div>
+
   <video class="input_video"></video>
   <canvas class="output_canvas"></canvas>
 
@@ -28,15 +35,16 @@
     const videoElement = document.getElementsByClassName('input_video')[0];
     const canvasElement = document.getElementsByClassName('output_canvas')[0];
     const canvasCtx = canvasElement.getContext('2d');
-    
-    // 計算角度的輔助函式
-    function getAngle(p1, p2, p3) {
-      const rad = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
-      let angle = Math.abs(rad * 180.0 / Math.PI);
-      if (angle > 180) angle = 360 - angle;
+
+    // 1. 角度計算工具
+    function calculateAngle(a, b, c) {
+      const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+      let angle = Math.abs(radians * 180.0 / Math.PI);
+      if (angle > 180.0) angle = 360 - angle;
       return angle;
     }
 
+    // 2. 處理辨識結果
     function onResults(results) {
       if (!results.poseLandmarks) return;
       
@@ -49,40 +57,48 @@
 
       const lm = results.poseLandmarks;
 
-      // --- 核心分析數據 ---
-      // 1. 手肘分析 (以左手拉弓為例，可視需求調整)
-      const lElbowAngle = getAngle(lm[11], lm[13], lm[15]);
-      document.getElementById('elbow-val').innerText = Math.round(lElbowAngle) + "°";
+      // --- 更新數據面板 ---
+      // 後手肘 (假設右撇子，看右手 12, 14, 16)
+      const rElbow = calculateAngle(lm[12], lm[14], lm[16]);
+      document.getElementById('elbow-val').innerText = Math.round(rElbow) + "°";
 
-      // 2. 軀幹垂直度 (肩膀中點對比髖部中點)
+      // 軀幹 (肩中點 vs 髖中點)
       const sMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
       const hMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
-      const torsoAngle = getAngle(sMid, hMid, {x: hMid.x, y: 0});
-      document.getElementById('torso-val').innerText = Math.round(torsoAngle) + "°";
+      const torso = calculateAngle(sMid, hMid, {x: hMid.x, y: 0});
+      document.getElementById('torso-val').innerText = Math.round(torso) + "°";
 
-      // --- 繪圖回饋 ---
+      // 雙膝
+      const lKnee = calculateAngle(lm[23], lm[25], lm[27]);
+      const rKnee = calculateAngle(lm[24], lm[26], lm[28]);
+      document.getElementById('lknee-val').innerText = Math.round(lKnee) + "°";
+      document.getElementById('rknee-val').innerText = Math.round(rKnee) + "°";
+
+      // --- 繪製骨架 ---
       drawConnectors(canvasCtx, lm, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
-      
-      // 特別標記雙腳與軀幹
-      const drawPoints = [11, 12, 13, 14, 23, 24, 25, 26, 27, 28]; // 肩、肘、髖、膝、踝
-      drawPoints.forEach(i => {
-        const p = lm[i];
-        canvasCtx.beginPath();
-        canvasCtx.arc(p.x * canvasElement.width, p.y * canvasElement.height, 5, 0, 2 * Math.PI);
-        canvasCtx.fillStyle = "#00FF00";
-        canvasCtx.fill();
-      });
+      drawLandmarks(canvasCtx, lm, {color: '#00FF00', lineWidth: 1, radius: 3});
 
       canvasCtx.restore();
     }
 
-    const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
-    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
+    // 3. 初始化 MediaPipe
+    const pose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
+
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
     pose.onResults(onResults);
 
+    // 4. 啟動相機
     const camera = new Camera(videoElement, {
       onFrame: async () => { await pose.send({image: videoElement}); },
-      width: 640, height: 480
+      width: 640,
+      height: 480
     });
     camera.start();
   </script>
