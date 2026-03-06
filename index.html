@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 自動偵測與偏差分析版</title>
+  <title>射箭 Pro AI - 專業穩定度分析版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -11,204 +11,270 @@
     body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
     .header-controls { padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: 100%; background: #1a1a1a; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 100; }
     .btn { background: #222; color: #00FF00; padding: 8px 12px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s; }
-    .btn-lock { background: #CC0000; color: white; border-color: #FF0000; }
-    .btn-locked { background: #FF8800 !important; border-color: #FFAA00 !important; }
+    .btn:active { background: #00FF00; color: #000; }
+    .btn-lock { border-color: #ff4444; color: #ff4444; }
+    .btn-lock.active { background: #ff4444; color: #000; }
     
-    .dashboard-pro { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 95%; max-width: 600px; margin: 15px 0; }
-    .data-card { background: #1a1a1a; padding: 8px; border-radius: 8px; border: 1px solid #333; text-align: center; }
-    .data-label { font-size: 10px; color: #888; margin-bottom: 2px; }
-    .data-main { font-size: 16px; font-weight: bold; color: #00FF00; }
-    .data-delta { font-size: 11px; font-weight: bold; margin-top: 2px; }
-    .delta-stable { color: #00FF00; }
-    .delta-warn { color: #FF4444; }
-
-    .comparison-container { display: flex; gap: 10px; width: 95%; max-width: 1200px; flex-wrap: wrap; justify-content: center; }
-    .video-slot { flex: 1; min-width: 300px; max-width: 500px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
+    .comparison-container { display: flex; gap: 10px; width: 95%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; justify-content: center; }
+    .video-slot { flex: 1; min-width: 320px; max-width: 500px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
+    
     .canvas-box { position: relative; width: 100%; aspect-ratio: 9/16; background: #000; border-radius: 8px; overflow: hidden; }
     canvas { width: 100%; height: 100%; object-fit: contain; }
     video { display: none; }
-    .custom-progress { width: 100%; margin: 10px 0; accent-color: #00FF00; }
+
+    .slot-dash { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .mini-card { background: #000; padding: 8px; border-radius: 6px; border: 1px solid #444; }
+    .mini-label { font-size: 11px; color: #aaa; margin-bottom: 4px; }
+    .val-group { display: flex; justify-content: space-between; align-items: baseline; }
+    .mini-val { font-size: 18px; color: #00FF00; font-weight: bold; }
+    .mini-delta { font-size: 12px; font-weight: bold; }
+    .delta-plus { color: #ff4444; } /* 偏差過大 */
+    .delta-ok { color: #00FF00; }   /* 穩定 */
+
+    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; border-radius: 8px; }
+    .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
+    .bar-fill { width: 0%; height: 100%; background: #00FF00; }
+
     .hidden { display: none !important; }
+    .status-msg { font-size: 12px; color: #ffeb3b; text-align: center; margin-top: 5px; height: 15px; }
   </style>
 </head>
 <body>
 
   <div class="header-controls">
     <button class="btn" onclick="activateLiveMode()">📸 即時鏡頭</button>
-    <label class="btn" for="upload-A">📁 影片 A</label>
-    <input type="file" id="upload-A" hidden onchange="handleFile(event, 'A')">
-    <button id="lock-btn" class="btn btn-lock" onclick="toggleLock()">🔒 鎖定定位點 (測偏差)</button>
-    <button class="btn" onclick="location.reload()" style="color:#ff4444; border-color:#ff4444">🔄 重置</button>
-  </div>
-
-  <div class="dashboard-pro">
-    <div class="data-card"><div class="data-label">前肩</div><div id="f-shoulder-val" class="data-main">--</div><div id="f-shoulder-delta" class="data-delta"></div></div>
-    <div class="data-card"><div class="data-label">前手肘</div><div id="f-elbow-val" class="data-main">--</div><div id="f-elbow-delta" class="data-delta"></div></div>
-    <div class="data-card"><div class="data-label">後肩</div><div id="b-shoulder-val" class="data-main">--</div><div id="b-shoulder-delta" class="data-delta"></div></div>
-    <div class="data-card"><div class="data-label">後手肘</div><div id="b-elbow-val" class="data-main">--</div><div id="b-elbow-delta" class="data-delta"></div></div>
-    <div class="data-card"><div class="data-label">軀幹垂直</div><div id="torso-val" class="data-main">--</div><div id="torso-delta" class="data-delta"></div></div>
-    <div class="data-card"><div class="data-label">髖部水平</div><div id="hip-val" class="data-main">--</div><div id="hip-delta" class="data-delta"></div></div>
+    <label class="btn" for="upload-A">📁 上傳影片 A</label>
+    <input type="file" id="upload-A" accept="video/*" hidden onchange="handleFile(event, 'A')">
+    <label class="btn" for="upload-B">📁 上傳影片 B</label>
+    <input type="file" id="upload-B" accept="video/*" hidden onchange="handleFile(event, 'B')">
+    <button class="btn btn-lock" id="lock-btn" onclick="toggleLock()">🔒 鎖定定位點 (Anchor)</button>
+    <button class="btn" style="border-color:#ff4444; color:#ff4444;" onclick="location.reload()">🔄 重設</button>
   </div>
 
   <div class="comparison-container">
     <div class="video-slot" id="slot-A">
-      <div class="canvas-box"><canvas id="canvas-A"></canvas></div>
-      <input type="range" id="progress-A" class="custom-progress hidden" min="0" max="100" value="0" oninput="manualSeek('A')">
-      <video id="video-A" playsinline muted crossorigin="anonymous"></video>
+      <div class="canvas-box">
+        <div class="overlay" id="overlay-A"><div style="color:#00FF00">深度分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <video id="video-A" playsinline muted></video>
+        <canvas id="canvas-A"></canvas>
+      </div>
+      <div class="status-msg" id="msg-A"></div>
+      <div class="slot-dash">
+        <div class="mini-card">
+          <div class="mini-label">後手肘夾角</div>
+          <div class="val-group">
+            <span id="elbow-A" class="mini-val">--°</span>
+            <span id="d-elbow-A" class="mini-delta">Δ --</span>
+          </div>
+        </div>
+        <div class="mini-card">
+          <div class="mini-label">開弓肩膀角</div>
+          <div class="val-group">
+            <span id="shoulder-A" class="mini-val">--°</span>
+            <span id="d-shoulder-A" class="mini-delta">Δ --</span>
+          </div>
+        </div>
+        <div class="mini-card">
+          <div class="mini-label">軀幹垂直度</div>
+          <div class="val-group">
+            <span id="torso-A" class="mini-val">--°</span>
+            <span id="d-torso-A" class="mini-delta">Δ --</span>
+          </div>
+        </div>
+        <div class="mini-card">
+          <div class="mini-label">重心傾斜</div>
+          <div class="val-group">
+            <span id="hip-A" class="mini-val">--°</span>
+            <span id="d-hip-A" class="mini-delta">Δ --</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="video-slot hidden" id="slot-B">
+        <div class="canvas-box">
+            <div class="overlay" id="overlay-B"><div style="color:#00FF00">分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
+            <video id="video-B" playsinline muted></video>
+            <canvas id="canvas-B"></canvas>
+        </div>
+        <div class="status-msg" id="msg-B"></div>
+        <div class="slot-dash">
+            <div class="mini-card"><div class="mini-label">後手肘</div><div class="val-group"><span id="elbow-B" class="mini-val">--°</span><span id="d-elbow-B" class="mini-delta">Δ --</span></div></div>
+            <div class="mini-card"><div class="mini-label">肩膀角</div><div class="val-group"><span id="shoulder-B" class="mini-val">--°</span><span id="d-shoulder-B" class="mini-delta">Δ --</span></div></div>
+            <div class="mini-card"><div class="mini-label">垂直度</div><div class="val-group"><span id="torso-B" class="mini-val">--°</span><span id="d-torso-B" class="mini-delta">Δ --</span></div></div>
+            <div class="mini-card"><div class="mini-label">重心</div><div class="val-group"><span id="hip-B" class="mini-val">--°</span><span id="d-hip-B" class="mini-delta">Δ --</span></div></div>
+        </div>
     </div>
   </div>
 
   <script>
     const slots = {
-      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), prog: document.getElementById('progress-A'), lastRes: null }
+      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), lastRes: null, lastElbowX: null, baseline: null },
+      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), lastRes: null, lastElbowX: null, baseline: null }
     };
 
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
-    let isLocked = false;
-    let baseline = null;
+    let camera = null;
+    let isLiveMode = false;
     let globalAiBusy = false;
     let currentCallbackTarget = null;
-    let lastElbowX = null; // 用於偵測放箭
+    let isLocked = false;
 
     pose.onResults((results) => {
       if (currentCallbackTarget && slots[currentCallbackTarget]) {
         slots[currentCallbackTarget].lastRes = results;
-        if (currentCallbackTarget === 'A' && results.poseLandmarks) {
-          processArcheryLogic(results.poseLandmarks);
-        }
+        processArcheryLogic(currentCallbackTarget, results.poseLandmarks);
       }
       globalAiBusy = false;
     });
 
-    function getAngle(p1, p2, p3) {
-      if (!p1 || !p2 || !p3) return 0;
-      const rad = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
-      let ang = Math.abs(rad * 180 / Math.PI);
-      return ang > 180 ? 360 - ang : ang;
-    }
-
-    function processArcheryLogic(lm) {
-      // 1. 自動判斷左/右手持弓 (根據手腕 X 座標)
-      const isLeftHandForward = lm[15].x < lm[16].x;
-      
-      // 定義關鍵點
-      const fS = isLeftHandForward ? 11 : 12; // 前肩
-      const fE = isLeftHandForward ? 13 : 14; // 前手肘
-      const fW = isLeftHandForward ? 15 : 16; // 前手腕
-      const bS = isLeftHandForward ? 12 : 11; // 後肩
-      const bE = isLeftHandForward ? 14 : 13; // 後手肘
-      const bW = isLeftHandForward ? 16 : 15; // 後手腕
-      const fH = isLeftHandForward ? 23 : 24; // 前髖
-      const bH = isLeftHandForward ? 24 : 23; // 後髖
-
-      // 2. 計算六大核心角度
-      const currentAngles = {
-        'f-shoulder': getAngle(lm[fH], lm[fS], lm[fE]),
-        'f-elbow': getAngle(lm[fS], lm[fE], lm[fW]),
-        'b-shoulder': getAngle(lm[bH], lm[bS], lm[bE]),
-        'b-elbow': getAngle(lm[bS], lm[bE], lm[bW]),
-        'torso': getAngle({x: lm[fS].x, y: 0}, lm[fS], lm[fH]), // 軀幹與垂直線
-        'hip': getAngle(lm[23], {x: (lm[23].x + lm[24].x)/2, y: lm[23].y}, lm[24]) // 髖部水平度
-      };
-
-      // 3. 自動偵測放箭 (後手肘 X 軸突然向後位移)
-      if (!isLocked) {
-        if (lastElbowX !== null) {
-          const moveSpeed = isLeftHandForward ? (lm[bE].x - lastElbowX) : (lastElbowX - lm[bE].x);
-          if (moveSpeed > 0.05) { // 放箭閾值
-            console.log("偵測到放箭！");
-            toggleLock(true);
-          }
-        }
-        lastElbowX = lm[bE].x;
-      }
-
-      // 4. 更新 UI 與 Δ Delta 計算
-      for (let key in currentAngles) {
-        const val = currentAngles[key].toFixed(1);
-        document.getElementById(`${key}-val`).innerText = val + "°";
-        
-        if (isLocked && baseline) {
-          const delta = (currentAngles[key] - baseline[key]).toFixed(1);
-          const deltaEl = document.getElementById(`${key}-delta`);
-          deltaEl.innerText = `Δ ${delta > 0 ? '+' : ''}${delta}°`;
-          deltaEl.className = Math.abs(delta) > 3 ? 'data-delta delta-warn' : 'data-delta delta-stable';
+    function toggleLock() {
+        isLocked = !isLocked;
+        const btn = document.getElementById('lock-btn');
+        if (isLocked) {
+            btn.innerText = "🔓 解除鎖定";
+            btn.classList.add('active');
+            // 抓取當前數值作為基準
+            ['A', 'B'].forEach(id => {
+                if (slots[id].currentData) slots[id].baseline = { ...slots[id].currentData };
+            });
         } else {
-          document.getElementById(`${key}-delta`).innerText = "";
+            btn.innerText = "🔒 鎖定定位點 (Anchor)";
+            btn.classList.remove('active');
+            ['A', 'B'].forEach(id => { slots[id].baseline = null; });
         }
-      }
-
-      // 5. 如果未鎖定，持續更新基準值供下一影格比對（或點擊鎖定時抓取最後一份）
-      if (!isLocked) baseline = { ...currentAngles };
     }
 
-    function toggleLock(auto = false) {
-      isLocked = !isLocked;
-      const btn = document.getElementById('lock-btn');
-      if (isLocked) {
-        btn.innerText = auto ? "🎯 放箭已偵測 (鎖定中)" : "🔓 解除鎖定";
-        btn.classList.add('btn-locked');
-      } else {
-        btn.innerText = "🔒 鎖定定位點 (測偏差)";
-        btn.classList.remove('btn-locked');
-        lastElbowX = null; 
-      }
+    function getAng(p1, p2, p3) {
+        const rad = Math.atan2(p3.y-p2.y, p3.x-p2.x) - Math.atan2(p1.y-p2.y, p1.x-p2.x);
+        let ang = Math.abs(rad * 180 / Math.PI);
+        return Math.round(ang > 180 ? 360 - ang : ang);
     }
 
-    // --- 以下為原有的穩定播放邏輯 ---
+    function processArcheryLogic(id, lm) {
+      if (!lm) return;
+      const slot = slots[id];
+      
+      // 1. 辨別左右撇子 (以手肘較高者為後手肘)
+      const isRightHanded = lm[14].y < lm[13].y;
+      const drawElbow = isRightHanded ? lm[14] : lm[13];
+      const drawShoulder = isRightHanded ? lm[12] : lm[11];
+      const drawWrist = isRightHanded ? lm[16] : lm[15];
+      const frontShoulder = isRightHanded ? lm[11] : lm[12];
+      const frontHip = isRightHanded ? lm[23] : lm[24];
+
+      // 2. 計算各項角度
+      const data = {
+          elbow: getAng(drawShoulder, drawElbow, drawWrist), // 後手肘夾角
+          shoulder: getAng(frontShoulder, drawShoulder, drawElbow), // 肩膀開弓角
+          torso: getAng({x: frontShoulder.x, y: 0}, frontShoulder, frontHip), // 軀幹垂直度
+          hip: getAng({x: (lm[23].x+lm[24].x)/2, y: 0}, {x: (lm[23].x+lm[24].x)/2, y: (lm[23].y+lm[24].y)/2}, lm[23]) // 髖部重心
+      };
+      slot.currentData = data;
+
+      // 3. 自動放箭偵測 (偵測後手肘水平突變)
+      if (slot.lastElbowX !== null) {
+          const move = Math.abs(drawElbow.x - slot.lastElbowX);
+          if (move > 0.05 && !slot.vid.paused) { // 靈敏度閾值
+              slot.vid.pause();
+              document.getElementById(`msg-${id}`).innerText = "🎯 偵測到放箭！已自動定格";
+          }
+      }
+      slot.lastElbowX = drawElbow.x;
+
+      // 4. 更新 UI
+      updateDisplay(id, data);
+    }
+
+    function updateDisplay(id, data) {
+        const slot = slots[id];
+        const fields = ['elbow', 'shoulder', 'torso', 'hip'];
+        
+        fields.forEach(f => {
+            const valEl = document.getElementById(`${f}-${id}`);
+            const deltaEl = document.getElementById(`d-${f}-${id}`);
+            valEl.innerText = data[f] + "°";
+
+            if (slot.baseline) {
+                const diff = data[f] - slot.baseline[f];
+                deltaEl.innerText = `Δ ${diff > 0 ? '+' : ''}${diff}`;
+                deltaEl.className = Math.abs(diff) > 3 ? 'mini-delta delta-plus' : 'mini-delta delta-ok';
+            } else {
+                deltaEl.innerText = "Δ --";
+                deltaEl.className = 'mini-delta';
+            }
+        });
+    }
+
+    // --- 以下為基礎影片控制邏輯 ---
+
     async function activateLiveMode() {
-      globalAiBusy = false; currentCallbackTarget = 'A';
-      const camera = new Camera(slots.A.vid, {
+      isLiveMode = true;
+      document.getElementById('slot-B').classList.add('hidden');
+      if (camera) await camera.stop();
+      slots.A.vid.srcObject = null;
+      camera = new Camera(slots.A.vid, {
         onFrame: async () => {
-          if (!globalAiBusy) {
+          if (isLiveMode && !globalAiBusy) {
             globalAiBusy = true;
+            currentCallbackTarget = 'A';
             await pose.send({ image: slots.A.vid });
           }
-        }, width: 640, height: 480
+        },
+        facingMode: "environment", width: 640, height: 480
       });
       camera.start();
     }
 
     async function handleFile(event, id) {
+      isLiveMode = false;
       const file = event.target.files[0];
       if (!file) return;
-      const slot = slots[id];
-      slot.prog.classList.remove('hidden');
-      slot.vid.src = URL.createObjectURL(file);
-      slot.vid.onloadeddata = () => { slot.vid.play(); };
-    }
+      if (id === 'B') document.getElementById('slot-B').classList.remove('hidden');
 
-    async function manualSeek(id) {
       const slot = slots[id];
-      slot.vid.currentTime = (slot.prog.value / 100) * slot.vid.duration;
-      if (!globalAiBusy) {
-        globalAiBusy = true; currentCallbackTarget = id;
+      slot.ovl.style.display = 'flex';
+      slot.vid.src = URL.createObjectURL(file);
+      slot.vid.load();
+
+      await new Promise(r => slot.vid.onloadeddata = r);
+      const duration = slot.vid.duration;
+      for (let t = 0; t <= duration; t += 0.2) {
+        slot.vid.currentTime = t;
+        await new Promise(res => { slot.vid.onseeked = res; });
+        currentCallbackTarget = id;
         await pose.send({ image: slot.vid });
+        slot.fill.style.width = (t / duration * 100) + "%";
       }
+      slot.ovl.style.display = 'none';
+      slot.vid.currentTime = 0;
     }
 
     function draw() {
-      const slot = slots.A;
-      if (slot.vid.readyState >= 2) {
-        slot.cvs.width = slot.vid.videoWidth;
-        slot.cvs.height = slot.vid.videoHeight;
-        slot.ctx.drawImage(slot.vid, 0, 0);
-        if (slot.lastRes && slot.lastRes.poseLandmarks) {
-          drawConnectors(slot.ctx, slot.lastRes.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-          drawLandmarks(slot.ctx, slot.lastRes.poseLandmarks, {color: '#FFFFFF', radius: 1});
-        }
-        if (!slot.vid.paused) {
-          slot.prog.value = (slot.vid.currentTime / slot.vid.duration) * 100;
-          if (!globalAiBusy) {
-            globalAiBusy = true; currentCallbackTarget = 'A';
-            pose.send({ image: slot.vid });
+      ['A', 'B'].forEach(id => {
+        const slot = slots[id];
+        if (slot.vid.readyState >= 2) {
+          slot.cvs.width = slot.vid.videoWidth;
+          slot.cvs.height = slot.vid.videoHeight;
+          slot.ctx.drawImage(slot.vid, 0, 0);
+          
+          if (!isLiveMode && !slot.vid.paused && !globalAiBusy) {
+              globalAiBusy = true;
+              currentCallbackTarget = id;
+              pose.send({ image: slot.vid });
+          }
+
+          if (slot.lastRes && slot.lastRes.poseLandmarks) {
+            drawConnectors(slot.ctx, slot.lastRes.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+            drawLandmarks(slot.ctx, slot.lastRes.poseLandmarks, {color: '#FFF', radius: 1});
           }
         }
-      }
+      });
       requestAnimationFrame(draw);
     }
+
     window.onload = () => { draw(); activateLiveMode(); };
   </script>
 </body>
