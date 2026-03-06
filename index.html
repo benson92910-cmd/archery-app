@@ -1,104 +1,28 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 終極修復版</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
-  <style>
-    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-    .header-controls { padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: 100%; background: #1a1a1a; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 100; }
-    .btn { background: #222; color: #00FF00; padding: 8px 12px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 12px; font-weight: bold; }
-    .btn-danger { border-color: #ff4444; color: #ff4444; }
-    .btn-snap { background: #00FF00; color: #000; grid-column: span 2; margin-top: 5px; border: none; }
-    .comparison-container { display: flex; gap: 10px; width: 95%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; justify-content: center; }
-    .video-slot { flex: 1; min-width: 300px; max-width: 500px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
-    .canvas-box { position: relative; width: 100%; aspect-ratio: 9/16; background: #000; border-radius: 8px; overflow: hidden; }
-    canvas { width: 100%; height: 100%; object-fit: contain; position: relative; z-index: 5; }
-    video { display: none; }
-    .custom-progress { width: 100%; margin: 10px 0; accent-color: #00FF00; }
-    .slot-dash { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 8px; }
-    .mini-card { background: #000; padding: 5px; border-radius: 5px; text-align: center; border: 1px solid #444; }
-    .mini-label { font-size: 10px; color: #888; }
-    .mini-val { font-size: 14px; color: #00FF00; font-weight: bold; }
-    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
-    .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
-    .bar-fill { width: 0%; height: 100%; background: #00FF00; }
-    #sync-controls { width: 100%; display: flex; justify-content: center; padding: 10px; }
-    .hidden { display: none !important; }
-  </style>
-</head>
-<body>
-
-  <div class="header-controls">
-    <button class="btn" onclick="activateLiveMode()">📸 啟動鏡頭</button>
-    <button class="btn" onclick="toggleCamera()">🔄 切換鏡頭</button>
-    <label class="btn" for="upload-A">📁 影片 A</label>
-    <input type="file" id="upload-A" accept="video/*" hidden onchange="handleFile(event, 'A')">
-    <label class="btn" for="upload-B">📁 影片 B</label>
-    <input type="file" id="upload-B" accept="video/*" hidden onchange="handleFile(event, 'B')">
-    <button class="btn btn-danger" onclick="location.reload()">🔄 重設</button>
-  </div>
-
-  <div id="sync-controls" class="hidden">
-    <button class="btn" style="background:#00FF00; color:#000; padding: 10px 40px;" onclick="togglePlaySync()">▶ 同步播放 / 暫停</button>
-  </div>
-
-  <div class="comparison-container">
-    <div class="video-slot" id="slot-A">
-      <div class="canvas-box">
-        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">深度分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
-        <video id="video-A" playsinline muted crossorigin="anonymous"></video>
-        <canvas id="canvas-A"></canvas>
-      </div>
-      <input type="range" class="custom-progress hidden" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')">
-      <div class="slot-dash">
-        <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">軀幹垂直</div><div id="torso-A" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 2; border-color: #00FF00;"><div class="mini-label">穩定度 (Δ)</div><div id="drift-A" class="mini-val">--°</div></div>
-        <button class="btn btn-snap" onclick="resetBaseline('A')">🎯 鎖定基準</button>
-      </div>
-    </div>
-
-    <div class="video-slot hidden" id="slot-B">
-      <div class="canvas-box">
-        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">深度分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
-        <video id="video-B" playsinline muted crossorigin="anonymous"></video>
-        <canvas id="canvas-B"></canvas>
-      </div>
-      <input type="range" class="custom-progress" id="progress-B" min="0" max="100" value="0" oninput="manualSeek('B')">
-      <div class="slot-dash">
-        <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">軀幹垂直</div><div id="torso-B" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 2; border-color: #00FF00;"><div class="mini-label">穩定度 (Δ)</div><div id="drift-B" class="mini-val">--°</div></div>
-        <button class="btn btn-snap" onclick="resetBaseline('B')">🎯 鎖定基準</button>
-      </div>
-    </div>
-  </div>
-
-  <script>
+<script>
     const slots = {
       A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null },
       B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null }
     };
 
+    // 優化 1：提升模型複雜度至 2 (iPhone 17 建議使用最高精度)
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
+    pose.setOptions({ 
+      modelComplexity: 2, 
+      smoothLandmarks: true,
+      enableSegmentation: false, // 關閉去背功能以換取最高 FPS
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5 
+    });
 
-    let camera = null, isLive = false, aiBusy = false, currentId = null, facing = "environment";
+    let camera = null, isLive = false, aiBusy = { A: false, B: false }, currentId = null, facing = "environment";
 
     pose.onResults((res) => {
       if (currentId && slots[currentId]) {
         slots[currentId].lastRes = res;
         updateUI(currentId, res.poseLandmarks);
       }
-      aiBusy = false;
+      // 優化 2：將鎖定細分化，避免 A/B 互相等待
+      aiBusy[currentId] = false; 
     });
 
     function getAng(p1, p2, p3) {
@@ -130,80 +54,47 @@
         const drift = Math.abs(metrics.elb - slots[id].baseline.elb) + Math.abs(metrics.fSh - slots[id].baseline.fSh);
         const el = document.getElementById(`drift-${id}`);
         el.innerText = drift + "°";
-        el.style.color = drift > 7 ? "#ff4444" : "#00FF00";
+        el.style.color = drift > 5 ? "#ff4444" : "#00FF00";
       }
     }
 
+    // 優化 3：分析時採用更高密度的取樣 (0.2s 步進)
     async function handleFile(e, id) {
-      // 關鍵修復：完全清除鏡頭佔用
-      if (isLive) { 
-        isLive = false; 
-        if(camera) { await camera.stop(); camera = null; }
-        slots.A.vid.srcObject = null;
-        slots.A.vid.load();
-      }
-      
+      if (isLive) { isLive = false; if(camera) { await camera.stop(); camera = null; } }
       const file = e.target.files[0];
       if (!file) return;
-
       const s = slots[id];
-      if (id === 'B') {
-        document.getElementById('slot-B').classList.remove('hidden');
-        document.getElementById('sync-controls').classList.remove('hidden');
-      }
-      
+      if (id === 'B') document.getElementById('slot-B').classList.remove('hidden');
       s.ovl.style.display = 'flex';
-      s.prog.classList.remove('hidden');
-      
-      // 建立 Blob URL 並強制加載
-      const url = URL.createObjectURL(file);
-      s.vid.src = url;
-      s.vid.load();
-
-      // 等待元數據與解碼預熱
-      await new Promise(r => {
-          s.vid.onloadedmetadata = () => {
-              s.vid.currentTime = 0.1; // 稍微偏移避開第0幀可能黑屏
-              r();
-          };
-      });
-
+      s.vid.src = URL.createObjectURL(file);
+      await s.vid.load();
       const dur = s.vid.duration;
-      // 深度分析循環
-      for (let t = 0; t <= dur; t += 0.5) {
+      for (let t = 0; t <= dur; t += 0.2) {
         s.vid.currentTime = t;
         await new Promise(r => s.vid.onseeked = r);
-        currentId = id; aiBusy = true;
+        currentId = id; aiBusy[id] = true;
         await pose.send({ image: s.vid });
-        const p = Math.round((t/dur)*100);
-        s.fill.style.width = p + "%";
-        document.getElementById(`msg-${id}`).innerText = `分析中 ${p}%`;
+        s.fill.style.width = Math.round((t/dur)*100) + "%";
+        document.getElementById(`msg-${id}`).innerText = `高速分析中 ${Math.round((t/dur)*100)}%`;
       }
-      
       s.ovl.style.display = 'none';
       s.vid.currentTime = 0;
       s.vid.play();
     }
 
     async function activateLiveMode() {
-      // 清除舊有的影片來源
-      slots.A.vid.src = "";
-      slots.A.vid.load();
-      
       isLive = true;
       if (camera) await camera.stop();
       camera = new Camera(slots.A.vid, {
         onFrame: async () => {
-          if (isLive && !aiBusy) { aiBusy = true; currentId = 'A'; await pose.send({ image: slots.A.vid }); }
+          if (isLive && !aiBusy.A) { 
+            aiBusy.A = true; currentId = 'A'; 
+            await pose.send({ image: slots.A.vid }); 
+          }
         },
-        facingMode: facing, width: 640, height: 480
+        facingMode: facing, width: 1280, height: 720 // iPhone 17 可挑戰 720p 實時偵測
       });
       camera.start();
-    }
-
-    function toggleCamera() {
-      facing = (facing === "environment") ? "user" : "environment";
-      if (isLive) activateLiveMode();
     }
 
     function togglePlaySync() {
@@ -211,23 +102,7 @@
       if (vA.paused) { vA.play(); if(vB.src) vB.play(); } else { vA.pause(); vB.pause(); }
     }
 
-    function resetBaseline(id) {
-        const res = slots[id].lastRes?.poseLandmarks;
-        if (res) {
-            const isR = res[14].y < res[13].y;
-            slots[id].baseline = {
-                elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]),
-                fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24])
-            };
-            alert("開弓點已鎖定，開始監測移動量");
-        }
-    }
-
-    async function manualSeek(id) {
-        slots[id].vid.currentTime = (slots[id].prog.value / 100) * slots[id].vid.duration;
-        currentId = id; await pose.send({ image: slots[id].vid });
-    }
-
+    // 優化 4：全速繪圖迴圈
     function draw() {
       ['A', 'B'].forEach(id => {
         const s = slots[id];
@@ -238,21 +113,43 @@
           
           if (!s.vid.paused && s.vid.duration) {
             s.prog.value = (s.vid.currentTime / s.vid.duration) * 100;
-            // 播放中實時監測（降低頻率減輕壓力）
-            if (!aiBusy && Math.floor(s.vid.currentTime*10)%5===0) { 
-                aiBusy=true; currentId=id; pose.send({image:s.vid}); 
+            // 優化 5：移除取模運算，只要 AI 不忙碌就立即發送下一幀，實現最高 FPS
+            if (!aiBusy[id]) { 
+                aiBusy[id] = true; 
+                currentId = id; 
+                pose.send({image: s.vid}); 
             }
           }
           if (s.lastRes?.poseLandmarks) {
-            drawConnectors(s.ctx, s.lastRes.poseLandmarks, POSE_CONNECTIONS, {color:'#00FF00', lineWidth:2});
-            drawLandmarks(s.ctx, s.lastRes.poseLandmarks, {color:'#FFF', radius:1});
+            drawConnectors(s.ctx, s.lastRes.poseLandmarks, POSE_CONNECTIONS, {color:'#00FF00', lineWidth:3});
+            drawLandmarks(s.ctx, s.lastRes.poseLandmarks, {color:'#FFF', radius:2});
           }
         }
       });
       requestAnimationFrame(draw);
     }
 
+    function toggleCamera() {
+      facing = (facing === "environment") ? "user" : "environment";
+      if (isLive) activateLiveMode();
+    }
+
+    function resetBaseline(id) {
+        const res = slots[id].lastRes?.poseLandmarks;
+        if (res) {
+            const isR = res[14].y < res[13].y;
+            slots[id].baseline = {
+                elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]),
+                fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24])
+            };
+            alert("基準已鎖定");
+        }
+    }
+
+    async function manualSeek(id) {
+        slots[id].vid.currentTime = (slots[id].prog.value / 100) * slots[id].vid.duration;
+        currentId = id; await pose.send({ image: slots[id].vid });
+    }
+
     window.onload = () => { draw(); activateLiveMode(); };
-  </script>
-</body>
-</html>
+</script>
