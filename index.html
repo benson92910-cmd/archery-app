@@ -1,248 +1,179 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 專業分析版</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
-  <style>
-    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-    .header-controls { padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: 100%; background: #1a1a1a; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 100; }
-    .btn { background: #222; color: #00FF00; padding: 8px 12px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 12px; font-weight: bold; }
-    .btn-sync { border-color: #0088ff; color: #0088ff; }
-    .btn-danger { border-color: #ff4444; color: #ff4444; }
-    .btn-snap { background: #00FF00; color: #000; grid-column: span 2; margin-top: 5px; border: none; font-weight: bold; height: 35px; }
-    
-    .comparison-container { display: flex; gap: 10px; width: 95%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; justify-content: center; padding-bottom: 40px; }
-    .video-slot { flex: 1; min-width: 300px; max-width: 500px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
-    
-    .canvas-box { position: relative; width: 100%; aspect-ratio: 9/16; background: #000; border-radius: 8px; overflow: hidden; }
-    canvas { width: 100%; height: 100%; object-fit: contain; position: relative; z-index: 5; }
-    video { display: none; }
+const slots = {
+  A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null, lastElbow: 0, isLock: false, processing: false },
+  B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null, lastElbow: 0, isLock: false, processing: false }
+};
+const vLive = document.getElementById('video-live');
+const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
-    .custom-progress { width: 100%; height: 25px; margin: 10px 0; accent-color: #00FF00; display: block !important; cursor: pointer; }
-    
-    .slot-dash { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 5px; }
-    .mini-card { background: #000; padding: 6px; border-radius: 5px; text-align: center; border: 1px solid #444; }
-    .mini-label { font-size: 10px; color: #888; }
-    .mini-val { font-size: 14px; color: #00FF00; font-weight: bold; }
+let camera = null, isLive = false, globalAiBusy = false, facing = "environment";
+const RELEASE_THRESHOLD = 25; 
 
-    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; border-radius: 8px; }
-    .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
-    .bar-fill { width: 0%; height: 100%; background: #00FF00; }
-    .release-active { outline: 6px solid #ff4444 !important; transition: 0.1s; }
-    .hidden { display: none !important; }
-  </style>
-</head>
-<body>
+// 關鍵修正：使用回調分發結果給正確的 Slot
+pose.onResults((res) => {
+  if (res.image) {
+    // 透過比對來源或是標記來判斷是哪一個 Slot 的結果
+    const id = res.image.id === "video-B" ? 'B' : 'A';
+    slots[id].lastRes = res;
+    processArcheryLogic(id, res.poseLandmarks);
+    slots[id].processing = false;
+  }
+  globalAiBusy = false;
+});
 
-  <div class="header-controls">
-    <button class="btn" onclick="activateLiveMode()">📸 啟動鏡頭</button>
-    <button class="btn" onclick="toggleCamera()">🔄 切換鏡頭</button>
-    <label class="btn" for="upload-A">📁 影片 A</label>
-    <input type="file" id="upload-A" accept="video/*" hidden onchange="handleFile(event, 'A')">
-    <label class="btn" for="upload-B">📁 影片 B</label>
-    <input type="file" id="upload-B" accept="video/*" hidden onchange="handleFile(event, 'B')">
-    
-    <button class="btn btn-sync" onclick="syncPlay()">▶️ 同步重播 A/B</button>
-    
-    <button class="btn btn-danger" onclick="location.reload()">🔄 重設</button>
-  </div>
+function getAng(p1, p2, p3) {
+  if(!p1 || !p2 || !p3) return 0;
+  const r = Math.atan2(p3.y-p2.y, p3.x-p2.x) - Math.atan2(p1.y-p2.y, p1.x-p2.x);
+  let a = Math.abs(r * 180 / Math.PI);
+  return Math.round(a > 180 ? 360 - a : a);
+}
 
-  <div class="comparison-container">
-    <div class="video-slot" id="slot-A">
-      <div class="canvas-box">
-        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">分析 A 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
-        <video id="video-live" playsinline muted></video>
-        <video id="video-A" playsinline muted crossorigin="anonymous"></video>
-        <canvas id="canvas-A"></canvas>
-      </div>
-      <input type="range" class="custom-progress" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')">
-      <div class="slot-dash">
-        <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-A" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 1;"><div class="mini-label">穩定度 Δ</div><div id="drift-A" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 1; border-color: #ff4444;"><div class="mini-label" style="color:#ff4444">🎬 放箭數據</div><div id="release-A" class="mini-val" style="font-size:11px;">未偵測</div></div>
-        <button class="btn btn-snap" onclick="resetBaseline('A')">🎯 鎖定基準 (開始偵測放箭)</button>
-      </div>
-    </div>
+function processArcheryLogic(id, lm) {
+  if (!lm) return;
+  const isR = lm[14].y < lm[13].y;
+  const dS = isR?12:11, dE = isR?14:13, dW = isR?16:15;
+  const pS = isR?11:12, pE = isR?13:14, pH = isR?23:24;
+  
+  const elbow = getAng(lm[dS], lm[dE], lm[dW]);
+  const fSh = getAng(lm[pE], lm[pS], lm[pH]);
+  const bSh = getAng(lm[dE], lm[dS], lm[isR?24:23]);
+  const torso = getAng({x:(lm[11].x+lm[12].x)/2, y:0}, {x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2}, {x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2});
 
-    <div class="video-slot hidden" id="slot-B">
-      <div class="canvas-box">
-        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">分析 B 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
-        <video id="video-B" playsinline muted crossorigin="anonymous"></video>
-        <canvas id="canvas-B"></canvas>
-      </div>
-      <input type="range" class="custom-progress" id="progress-B" min="0" max="100" value="0" oninput="manualSeek('B')">
-      <div class="slot-dash">
-        <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-B" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 1;"><div class="mini-label">穩定度 Δ</div><div id="drift-B" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 1; border-color: #ff4444;"><div class="mini-label" style="color:#ff4444">🎬 放箭數據</div><div id="release-B" class="mini-val" style="font-size:11px;">未偵測</div></div>
-        <button class="btn btn-snap" onclick="resetBaseline('B')">🎯 鎖定基準 (開始偵測放箭)</button>
-      </div>
-    </div>
-  </div>
+  document.getElementById(`elbow-${id}`).innerText = elbow + "°";
+  document.getElementById(`f-shoulder-${id}`).innerText = fSh + "°";
+  document.getElementById(`b-shoulder-${id}`).innerText = bSh + "°";
+  document.getElementById(`torso-${id}`).innerText = torso + "°";
 
-  <script>
-    const slots = {
-      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null, lastElbow: 0, isLock: false },
-      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null, lastElbow: 0, isLock: false }
-    };
-    const vLive = document.getElementById('video-live');
-    const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
-
-    let camera = null, isLive = false, aiBusy = false, currentId = null, facing = "environment";
-    const RELEASE_THRESHOLD = 25; 
-
-    pose.onResults((res) => {
-      if (currentId && slots[currentId]) {
-        slots[currentId].lastRes = res;
-        processArcheryLogic(currentId, res.poseLandmarks);
+  if (slots[id].baseline && slots[id].lastElbow !== 0 && !slots[id].isLock) {
+      const delta = Math.abs(elbow - slots[id].lastElbow);
+      if (delta > RELEASE_THRESHOLD) {
+          triggerRelease(id, elbow, fSh);
       }
-      aiBusy = false;
+  }
+  slots[id].lastElbow = elbow;
+
+  if (slots[id].baseline) {
+    const drift = Math.abs(elbow - slots[id].baseline.elb) + Math.abs(fSh - slots[id].baseline.fSh);
+    const driftEl = document.getElementById(`drift-${id}`);
+    driftEl.innerText = drift + "°";
+    driftEl.style.color = drift > 5 ? "#ff4444" : "#00FF00";
+  }
+}
+
+function triggerRelease(id, elbow, fSh) {
+    slots[id].isLock = true;
+    const slotEl = document.getElementById(`slot-${id}`);
+    const logEl = document.getElementById(`release-${id}`);
+    slotEl.classList.add('release-active');
+    logEl.innerText = `肘:${elbow}° 肩:${fSh}°`;
+    logEl.style.color = "#FFCC00";
+    setTimeout(() => {
+        slotEl.classList.remove('release-active');
+        slots[id].isLock = false;
+    }, 3000);
+}
+
+async function handleFile(e, id) {
+  if (id === 'A' && isLive) { isLive = false; if(camera) await camera.stop(); vLive.srcObject = null; }
+  const file = e.target.files[0];
+  if (!file) return;
+  const s = slots[id];
+  if (id === 'B') document.getElementById('slot-B').classList.remove('hidden');
+  s.ovl.style.display = 'flex';
+  s.vid.src = URL.createObjectURL(file);
+  // 給影片加上 ID 以便在 onResults 中辨認
+  s.vid.id = `video-${id}`;
+  await s.vid.load();
+  
+  const dur = s.vid.duration;
+  for (let t = 0; t <= dur; t += 0.5) {
+    s.vid.currentTime = t;
+    await new Promise(r => s.vid.onseeked = r);
+    await pose.send({ image: s.vid });
+    s.fill.style.width = Math.round((t/dur)*100) + "%";
+  }
+  s.ovl.style.display = 'none';
+  s.vid.currentTime = 0;
+  s.vid.play();
+}
+
+async function activateLiveMode() {
+  slots.A.vid.src = "";
+  isLive = true;
+  if (camera) await camera.stop();
+  vLive.id = "video-A"; // Live 模式佔用 A 槽
+  camera = new Camera(vLive, {
+    onFrame: async () => {
+      if (isLive && !slots.A.processing) { 
+        slots.A.processing = true; 
+        await pose.send({ image: vLive }); 
+      }
+    },
+    facingMode: facing, width: 640, height: 480
+  });
+  camera.start();
+}
+
+function toggleCamera() { facing = (facing === "environment") ? "user" : "environment"; if (isLive) activateLiveMode(); }
+
+function resetBaseline(id) {
+    const res = slots[id].lastRes?.poseLandmarks;
+    if (res) {
+        const isR = res[14].y < res[13].y;
+        slots[id].baseline = { elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]), fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24]) };
+        alert("基準點鎖定成功！");
+    }
+}
+
+async function manualSeek(id) {
+    slots[id].vid.currentTime = (slots[id].prog.value / 100) * slots[id].vid.duration;
+    if(!slots[id].processing) {
+        slots[id].processing = true;
+        await pose.send({ image: slots[id].vid });
+    }
+}
+
+function syncPlay() {
+    if (isLive) { isLive = false; if(camera) camera.stop(); }
+    ['A', 'B'].forEach(id => {
+        if (slots[id].vid.src) {
+            slots[id].vid.currentTime = 0;
+            slots[id].vid.play();
+        }
     });
+}
 
-    function getAng(p1, p2, p3) {
-      if(!p1 || !p2 || !p3) return 0;
-      const r = Math.atan2(p3.y-p2.y, p3.x-p2.x) - Math.atan2(p1.y-p2.y, p1.x-p2.x);
-      let a = Math.abs(r * 180 / Math.PI);
-      return Math.round(a > 180 ? 360 - a : a);
-    }
-
-    function processArcheryLogic(id, lm) {
-      if (!lm) return;
-      const isR = lm[14].y < lm[13].y;
-      const dS = isR?12:11, dE = isR?14:13, dW = isR?16:15;
-      const pS = isR?11:12, pE = isR?13:14, pH = isR?23:24;
+// 核心繪製與排程迴圈
+function draw() {
+  ['A', 'B'].forEach(id => {
+    const s = slots[id];
+    const src = (id === 'A' && isLive) ? vLive : s.vid;
+    
+    if (src && src.readyState >= 2) {
+      s.cvs.width = src.videoWidth; 
+      s.cvs.height = src.videoHeight;
+      s.ctx.drawImage(src, 0, 0);
       
-      const elbow = getAng(lm[dS], lm[dE], lm[dW]);
-      const fSh = getAng(lm[pE], lm[pS], lm[pH]);
-      const bSh = getAng(lm[dE], lm[dS], lm[isR?24:23]);
-      const torso = getAng({x:(lm[11].x+lm[12].x)/2, y:0}, {x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2}, {x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2});
-
-      document.getElementById(`elbow-${id}`).innerText = elbow + "°";
-      document.getElementById(`f-shoulder-${id}`).innerText = fSh + "°";
-      document.getElementById(`b-shoulder-${id}`).innerText = bSh + "°";
-      document.getElementById(`torso-${id}`).innerText = torso + "°";
-
-      if (slots[id].baseline && slots[id].lastElbow !== 0 && !slots[id].isLock) {
-          const delta = Math.abs(elbow - slots[id].lastElbow);
-          if (delta > RELEASE_THRESHOLD) {
-              triggerRelease(id, elbow, fSh);
-          }
-      }
-      slots[id].lastElbow = elbow;
-
-      if (slots[id].baseline) {
-        const drift = Math.abs(elbow - slots[id].baseline.elb) + Math.abs(fSh - slots[id].baseline.fSh);
-        const driftEl = document.getElementById(`drift-${id}`);
-        driftEl.innerText = drift + "°";
-        driftEl.style.color = drift > 5 ? "#ff4444" : "#00FF00";
-      }
-    }
-
-    function triggerRelease(id, elbow, fSh) {
-        slots[id].isLock = true;
-        const slotEl = document.getElementById(`slot-${id}`);
-        const logEl = document.getElementById(`release-${id}`);
-        slotEl.classList.add('release-active');
-        logEl.innerText = `肘:${elbow}° 肩:${fSh}°`;
-        logEl.style.color = "#FFCC00";
-        setTimeout(() => {
-            slotEl.classList.remove('release-active');
-            slots[id].isLock = false;
-        }, 3000);
-    }
-
-    async function handleFile(e, id) {
-      if (id === 'A' && isLive) { isLive = false; if(camera) await camera.stop(); vLive.srcObject = null; vLive.load(); }
-      const file = e.target.files[0];
-      if (!file) return;
-      const s = slots[id];
-      if (id === 'B') document.getElementById('slot-B').classList.remove('hidden');
-      s.ovl.style.display = 'flex';
-      s.vid.src = URL.createObjectURL(file);
-      await s.vid.load();
-      const dur = s.vid.duration;
-      for (let t = 0; t <= dur; t += 0.5) {
-        s.vid.currentTime = t;
-        await new Promise(r => s.vid.onseeked = r);
-        currentId = id; aiBusy = true;
-        await pose.send({ image: s.vid });
-        s.fill.style.width = Math.round((t/dur)*100) + "%";
-      }
-      s.ovl.style.display = 'none';
-      s.vid.currentTime = 0; s.vid.play();
-    }
-
-    async function activateLiveMode() {
-      slots.A.vid.src = ""; slots.A.vid.load();
-      isLive = true;
-      if (camera) await camera.stop();
-      camera = new Camera(vLive, {
-        onFrame: async () => {
-          if (isLive && !aiBusy) { aiBusy = true; currentId = 'A'; await pose.send({ image: vLive }); }
-        },
-        facingMode: facing, width: 640, height: 480
-      });
-      camera.start();
-    }
-
-    function toggleCamera() { facing = (facing === "environment") ? "user" : "environment"; if (isLive) activateLiveMode(); }
-
-    function resetBaseline(id) {
-        const res = slots[id].lastRes?.poseLandmarks;
-        if (res) {
-            const isR = res[14].y < res[13].y;
-            slots[id].baseline = { elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]), fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24]) };
-            alert("基準點鎖定成功！現在開始監控穩定度與放箭瞬間。");
+      // 更新進度條
+      if (!src.paused && !src.ended && src.duration) {
+        s.prog.value = (src.currentTime / src.duration) * 100;
+        
+        // 關鍵：如果該 Slot 沒在處理，且全域 AI 也沒在忙，才發送請求
+        if (!s.processing && !globalAiBusy) {
+          s.processing = true;
+          globalAiBusy = true; 
+          pose.send({ image: src });
         }
-    }
+      }
 
-    async function manualSeek(id) {
-        slots[id].vid.currentTime = (slots[id].prog.value / 100) * slots[id].vid.duration;
-        currentId = id; aiBusy = true; await pose.send({ image: slots[id].vid });
+      // 繪製骨架
+      if (s.lastRes?.poseLandmarks) {
+        drawConnectors(s.ctx, s.lastRes.poseLandmarks, POSE_CONNECTIONS, {color:'#00FF00', lineWidth:4});
+        drawLandmarks(s.ctx, s.lastRes.poseLandmarks, {color:'#FFF', radius:2});
+      }
     }
+  });
+  requestAnimationFrame(draw);
+}
 
-    function syncPlay() {
-        if (isLive) { isLive = false; if(camera) camera.stop(); }
-        ['A', 'B'].forEach(id => {
-            const v = slots[id].vid;
-            if (v.src && v.readyState >= 2) {
-                v.currentTime = 0;
-                v.play();
-            }
-        });
-    }
-
-    function draw() {
-      ['A', 'B'].forEach(id => {
-        const s = slots[id];
-        const src = (id === 'A' && isLive) ? vLive : s.vid;
-        if (src.readyState >= 2) {
-          s.cvs.width = src.videoWidth; s.cvs.height = src.videoHeight;
-          s.ctx.drawImage(src, 0, 0);
-          if (!src.paused && src.duration) {
-            s.prog.value = (src.currentTime / src.duration) * 100;
-            if (!aiBusy) { aiBusy = true; currentId = id; pose.send({image: src}); }
-          }
-          if (s.lastRes?.poseLandmarks) {
-            drawConnectors(s.ctx, s.lastRes.poseLandmarks, POSE_CONNECTIONS, {color:'#00FF00', lineWidth:2});
-            drawLandmarks(s.ctx, s.lastRes.poseLandmarks, {color:'#FFF', radius:1});
-          }
-        }
-      });
-      requestAnimationFrame(draw);
-    }
-    window.onload = () => { draw(); activateLiveMode(); };
-  </script>
-</body>
-</html>
+window.onload = () => { draw(); };
