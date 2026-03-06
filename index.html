@@ -3,25 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 極速加速版</title>
+  <title>射箭 Pro AI - 預分析極速版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
-    body { margin: 0; background: #121212; color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; align-items: center; }
+    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
     .controls { display: flex; gap: 10px; padding: 20px 10px; width: 100%; justify-content: center; }
-    .btn { background: #333; color: white; padding: 10px 15px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 5px; }
+    .btn { background: #333; color: white; padding: 10px 15px; border-radius: 8px; border: 1px solid #00FF00; cursor: pointer; font-size: 14px; }
     #upload-input { display: none; }
+    
     .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 92%; margin-bottom: 15px; }
     .data-card { background: #222; padding: 15px; border-radius: 12px; text-align: center; border: 1px solid #00FF00; box-shadow: 0 0 10px rgba(0, 255, 0, 0.2); }
     .data-label { font-size: 13px; color: #aaa; margin-bottom: 5px; }
-    .data-value { font-size: 24px; font-weight: bold; color: #fff; }
+    .data-value { font-size: 24px; font-weight: bold; }
+
     .canvas-container { position: relative; width: 92%; max-width: 640px; border-radius: 20px; overflow: hidden; border: 2px solid #333; }
     canvas { width: 100%; display: block; background: #000; }
     video { display: none; }
-    #loading-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.85); padding: 25px; border-radius: 15px; border: 2px solid #00FF00; text-align: center; z-index: 100; width: 65%; display: none; }
-    .spin { animation: rotation 1.5s infinite linear; display: inline-block; font-size: 30px; }
-    @keyframes rotation { from { transform: rotate(0deg); } to { transform: rotate(359deg); } }
+
+    /* 預分析遮罩層 */
+    #analysis-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.9); display: none; flex-direction: column;
+      justify-content: center; align-items: center; z-index: 200;
+    }
+    .progress-track { width: 80%; height: 8px; background: #333; border-radius: 4px; margin-top: 15px; overflow: hidden; }
+    #progress-fill { width: 0%; height: 100%; background: #00FF00; box-shadow: 0 0 10px #00FF00; transition: width 0.1s; }
+    .status-text { font-weight: bold; color: #00FF00; letter-spacing: 1px; }
+    
     .release-hint { position: absolute; top: 20px; width: 100%; text-align: center; color: #FF3B30; font-size: 32px; font-weight: bold; pointer-events: none; text-shadow: 2px 2px 4px #000; }
   </style>
 </head>
@@ -29,8 +39,8 @@
 
   <div class="controls">
     <button class="btn" onclick="switchCamera()">🔄 切換鏡頭</button>
-    <label class="btn" for="upload-input">📁 上傳影片</label>
-    <input type="file" id="upload-input" accept="video/*" onchange="loadVideo(event)">
+    <label class="btn" for="upload-input">📁 上傳分析影片</label>
+    <input type="file" id="upload-input" accept="video/*" onchange="startAnalysisFlow(event)">
     <button class="btn" onclick="location.reload()"><span style="color:red">●</span> 即時模式</button>
   </div>
   
@@ -42,10 +52,10 @@
   </div>
 
   <div class="canvas-container">
-    <div id="loading-overlay">
-      <div class="spin">⚙️</div>
-      <div style="margin-top: 12px; font-weight: bold; letter-spacing: 1px;">AI 極速分析中...</div>
-      <div style="font-size: 11px; color: #00FF00; margin-top: 5px;">Optimizing Performance</div>
+    <div id="analysis-overlay">
+      <div class="status-text">🔍 AI 深度預分析中...</div>
+      <div class="progress-track"><div id="progress-fill"></div></div>
+      <div id="percent-text" style="margin-top:10px; color:#00FF00; font-family: monospace;">0%</div>
     </div>
     <div id="release-msg" class="release-hint"></div>
     <video class="input_video" playsinline muted crossorigin="anonymous"></video>
@@ -53,22 +63,32 @@
   </div>
 
   <script>
-    const videoElement = document.querySelector('.input_video');
-    const canvasElement = document.querySelector('.output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
-    const loadingOverlay = document.getElementById('loading-overlay');
+    const video = document.querySelector('.input_video');
+    const canvas = document.querySelector('.output_canvas');
+    const ctx = canvas.getContext('2d');
+    const overlay = document.getElementById('analysis-overlay');
+    const fill = document.getElementById('progress-fill');
+    const percentTxt = document.getElementById('percent-text');
     const releaseMsg = document.getElementById('release-msg');
-    
-    // ⚡ 加速專用：隱藏的小畫布
-    const offscreenCanvas = document.createElement('canvas');
-    const offscreenCtx = offscreenCanvas.getContext('2d');
-    const AI_INPUT_SIZE = 256; // 縮小到 256px 運算，速度提升顯著
 
     let camera = null;
-    let currentFacingMode = "environment";
+    let isAnalyzing = false;
     let lastResults = null;
-    let frameCounter = 0;
     let lastElbowX = 0;
+    const AI_INPUT_SIZE = 256; 
+
+    // 初始化 Pose
+    const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+    pose.setOptions({ modelComplexity: 0, smoothLandmarks: true });
+
+    pose.onResults((results) => {
+      lastResults = results;
+      if (isAnalyzing) {
+        stepNextFrame(); 
+      } else {
+        if (results.poseLandmarks) updateUI(results.poseLandmarks);
+      }
+    });
 
     function calculateAngle(a, b, c) {
       if(!a || !b || !c) return 0;
@@ -78,31 +98,12 @@
       return Math.round(angle);
     }
 
-    const pose = new Pose({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-    });
-
-    pose.setOptions({
-      modelComplexity: 0, 
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-
-    pose.onResults((results) => {
-      lastResults = results;
-      loadingOverlay.style.display = 'none';
-      if (results.poseLandmarks) updateUI(results.poseLandmarks);
-    });
-
     function updateUI(lm) {
       const isRight = lm[14].y < lm[13].y;
       const elbow = calculateAngle(lm[isRight?12:11], lm[isRight?14:13], lm[isRight?16:15]);
-      
       const sMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
       const hMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
       const torso = calculateAngle({x: sMid.x, y: 0}, sMid, hMid);
-
       const lKnee = calculateAngle(lm[23], lm[25], lm[27]);
       const rKnee = calculateAngle(lm[24], lm[26], lm[28]);
 
@@ -111,7 +112,6 @@
       document.getElementById('lknee-val').innerText = lKnee + "°";
       document.getElementById('rknee-val').innerText = rKnee + "°";
 
-      // 撒放偵測 (使用縮放後的座標依然有效)
       const backElbowX = lm[isRight?14:13].x;
       if (lastElbowX !== 0 && Math.abs(backElbowX - lastElbowX) > 0.05) {
         releaseMsg.innerText = "💥 RELEASE!";
@@ -120,65 +120,79 @@
       lastElbowX = backElbowX;
     }
 
-    function drawLoop() {
-      if (videoElement.readyState >= 2) {
-        // 1. 繪製主畫面
-        if (canvasElement.width !== videoElement.videoWidth) {
-          canvasElement.width = videoElement.videoWidth;
-          canvasElement.height = videoElement.videoHeight;
-        }
-        canvasCtx.save();
-        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-
-        // 2. 繪製骨架 (使用暫存結果)
-        if (lastResults && lastResults.poseLandmarks) {
-          drawConnectors(canvasCtx, lastResults.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-          drawLandmarks(canvasCtx, lastResults.poseLandmarks, {color: '#FFFFFF', radius: 1});
-        }
-        canvasCtx.restore();
-
-        // 3. ⚡ 極速分析邏輯：每 3 幀縮放並傳送一次
-        frameCounter++;
-        if (frameCounter % 3 === 0) {
-          offscreenCanvas.width = AI_INPUT_SIZE;
-          offscreenCanvas.height = AI_INPUT_SIZE;
-          offscreenCtx.drawImage(videoElement, 0, 0, AI_INPUT_SIZE, AI_INPUT_SIZE);
-          pose.send({ image: offscreenCanvas });
-        }
-      }
-      requestAnimationFrame(drawLoop);
-    }
-
-    async function loadVideo(event) {
+    // --- 預分析邏輯 ---
+    async function startAnalysisFlow(event) {
       const file = event.target.files[0];
       if (!file) return;
       if (camera) { await camera.stop(); camera = null; }
+
+      isAnalyzing = true;
+      overlay.style.display = 'flex';
+      video.src = URL.createObjectURL(file);
       
-      loadingOverlay.style.display = 'block';
-      videoElement.src = URL.createObjectURL(file);
-      videoElement.onloadeddata = () => {
-        videoElement.play();
-        lastResults = null; // 清除前一部影片的殘影
+      video.onloadeddata = () => {
+        video.currentTime = 0;
+      };
+
+      video.onseeked = () => {
+        if (isAnalyzing) pose.send({ image: video });
       };
     }
 
+    function stepNextFrame() {
+      const progress = (video.currentTime / video.duration) * 100;
+      fill.style.width = progress + "%";
+      percentTxt.innerText = Math.round(progress) + "%";
+
+      if (video.currentTime < video.duration - 0.1) {
+        video.currentTime += 0.1; // ⚡ 跳轉 0.1 秒進行下一幀分析
+      } else {
+        finishAnalysis();
+      }
+    }
+
+    function finishAnalysis() {
+      isAnalyzing = false;
+      overlay.style.display = 'none';
+      video.currentTime = 0;
+      video.play();
+      requestAnimationFrame(renderLoop);
+    }
+
+    // --- 繪圖循環 ---
+    function renderLoop() {
+      if (!video.paused && !isAnalyzing) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.save();
+        ctx.drawImage(video, 0, 0);
+        if (lastResults && lastResults.poseLandmarks) {
+          drawConnectors(ctx, lastResults.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+          drawLandmarks(ctx, lastResults.poseLandmarks, {color: '#FFFFFF', radius: 1});
+        }
+        ctx.restore();
+        pose.send({ image: video });
+        requestAnimationFrame(renderLoop);
+      }
+    }
+
     async function startCamera() {
-      camera = new Camera(videoElement, {
-        onFrame: async () => {}, // 邏輯統一在 drawLoop
-        facingMode: currentFacingMode,
-        width: 640, height: 480
+      camera = new Camera(video, {
+        onFrame: async () => {
+          if (!isAnalyzing) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            await pose.send({ image: video });
+          }
+        },
+        facingMode: "environment", width: 640, height: 480
       });
       camera.start();
-      drawLoop();
     }
 
     window.onload = startCamera;
-
-    function switchCamera() {
-      currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
-      startCamera();
-    }
+    function switchCamera() { location.reload(); }
   </script>
 </body>
 </html>
