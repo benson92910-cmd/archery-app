@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 專業分析版 (修正同步版)</title>
+  <title>射箭 Pro AI - 專業分析版 (骨架修復版)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -63,8 +63,8 @@
         <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-A" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-A" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-A" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 1;"><div class="mini-label">穩定度 Δ</div><div id="drift-A" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 1; border-color: #ff4444;"><div class="mini-label" style="color:#ff4444">🎬 放箭數據</div><div id="release-A" class="mini-val" style="font-size:11px;">未偵測</div></div>
+        <div class="mini-card"><div class="mini-label">穩定度 Δ</div><div id="drift-A" class="mini-val">--°</div></div>
+        <div class="mini-card" style="border-color: #ff4444;"><div class="mini-label" style="color:#ff4444">🎬 放箭數據</div><div id="release-A" class="mini-val" style="font-size:11px;">未偵測</div></div>
         <button class="btn btn-snap" onclick="resetBaseline('A')">🎯 鎖定基準 (開始偵測放箭)</button>
       </div>
     </div>
@@ -81,36 +81,34 @@
         <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-B" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-B" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-B" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 1;"><div class="mini-label">穩定度 Δ</div><div id="drift-B" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 1; border-color: #ff4444;"><div class="mini-label" style="color:#ff4444">🎬 放箭數據</div><div id="release-B" class="mini-val" style="font-size:11px;">未偵測</div></div>
+        <div class="mini-card"><div class="mini-label">穩定度 Δ</div><div id="drift-B" class="mini-val">--°</div></div>
+        <div class="mini-card" style="border-color: #ff4444;"><div class="mini-label" style="color:#ff4444">🎬 放箭數據</div><div id="release-B" class="mini-val" style="font-size:11px;">未偵測</div></div>
         <button class="btn btn-snap" onclick="resetBaseline('B')">🎯 鎖定基準 (開始偵測放箭)</button>
       </div>
     </div>
   </div>
 
   <script>
-    // 核心數據結構，增加 processing 狀態避免競態
     const slots = {
-      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null, lastElbow: 0, isLock: false, processing: false },
-      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null, lastElbow: 0, isLock: false, processing: false }
+      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null, lastElbow: 0, isLock: false },
+      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null, lastElbow: 0, isLock: false }
     };
     const vLive = document.getElementById('video-live');
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
-    let camera = null, isLive = false, aiBusyGlobal = false, facing = "environment";
+    let camera = null, isLive = false, aiBusy = false, facing = "environment";
+    let processingQueue = []; // 用來紀錄發送順序的隊列
     const RELEASE_THRESHOLD = 25; 
 
-    // 關鍵修正：透過 res.image 辨識來源並分發結果
+    // 核心修正：使用自定義隊列確保結果分配到正確的 Slot
     pose.onResults((res) => {
-      if (res.image) {
-        // 判斷結果屬於 A 還是 B (如果是 live 模式則強行歸類 A)
-        const id = (res.image.id === "video-B") ? 'B' : 'A';
-        slots[id].lastRes = res;
-        processArcheryLogic(id, res.poseLandmarks);
-        slots[id].processing = false;
+      const currentId = processingQueue.shift(); // 取出隊列中最前面的 ID
+      if (currentId && slots[currentId]) {
+        slots[currentId].lastRes = res;
+        processArcheryLogic(currentId, res.poseLandmarks);
       }
-      aiBusyGlobal = false;
+      aiBusy = false;
     });
 
     function getAng(p1, p2, p3) {
@@ -171,13 +169,13 @@
       if (id === 'B') document.getElementById('slot-B').classList.remove('hidden');
       s.ovl.style.display = 'flex';
       s.vid.src = URL.createObjectURL(file);
-      s.vid.id = `video-${id}`; // 強制賦予 ID 供 AI 識別
       await s.vid.load();
       
       const dur = s.vid.duration;
       for (let t = 0; t <= dur; t += 0.5) {
         s.vid.currentTime = t;
         await new Promise(r => s.vid.onseeked = r);
+        processingQueue.push(id); 
         await pose.send({ image: s.vid });
         s.fill.style.width = Math.round((t/dur)*100) + "%";
       }
@@ -189,12 +187,11 @@
       slots.A.vid.src = ""; slots.A.vid.load();
       isLive = true;
       if (camera) await camera.stop();
-      vLive.id = "video-A"; 
       camera = new Camera(vLive, {
         onFrame: async () => {
-          if (isLive && !slots.A.processing && !aiBusyGlobal) { 
-            slots.A.processing = true; 
-            aiBusyGlobal = true;
+          if (isLive && !aiBusy) { 
+            aiBusy = true; 
+            processingQueue.push('A');
             await pose.send({ image: vLive }); 
           }
         },
@@ -216,9 +213,9 @@
 
     async function manualSeek(id) {
         slots[id].vid.currentTime = (slots[id].prog.value / 100) * slots[id].vid.duration;
-        if (!slots[id].processing && !aiBusyGlobal) {
-          slots[id].processing = true;
-          aiBusyGlobal = true;
+        if (!aiBusy) {
+          aiBusy = true;
+          processingQueue.push(id);
           await pose.send({ image: slots[id].vid });
         }
     }
@@ -226,8 +223,7 @@
     function syncPlay() {
         if (isLive) { isLive = false; if(camera) camera.stop(); }
         ['A', 'B'].forEach(id => {
-            const v = slots[id].vid;
-            if (v.src && v.readyState >= 2) { v.currentTime = 0; v.play(); }
+            if (slots[id].vid.src) { slots[id].vid.currentTime = 0; slots[id].vid.play(); }
         });
     }
 
@@ -242,10 +238,10 @@
           
           if (!src.paused && !src.ended && src.duration) {
             s.prog.value = (src.currentTime / src.duration) * 100;
-            // 關鍵排程：輪流執行 AI 偵測
-            if (!s.processing && !aiBusyGlobal) {
-              s.processing = true;
-              aiBusyGlobal = true;
+            // 如果 AI 引擎不忙，推入隊列並請求
+            if (!aiBusy) {
+              aiBusy = true;
+              processingQueue.push(id);
               pose.send({ image: src });
             }
           }
