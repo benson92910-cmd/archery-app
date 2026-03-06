@@ -3,14 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 拖動同步版</title>
+  <title>射箭 Pro AI - 穩定比對旗艦版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
     body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
     .header-controls { padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: 100%; background: #1a1a1a; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 100; }
-    .btn { background: #222; color: #00FF00; padding: 8px 12px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 12px; font-weight: bold; }
+    .btn { background: #222; color: #00FF00; padding: 8px 12px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s; }
+    .btn:active { background: #00FF00; color: #000; }
     .btn-danger { border-color: #ff4444; color: #ff4444; }
     
     .comparison-container { display: flex; gap: 10px; width: 95%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; justify-content: center; }
@@ -39,7 +40,7 @@
 
   <div class="header-controls">
     <button class="btn" onclick="activateLiveMode()">📸 即時鏡頭</button>
-    <button class="btn" onclick="toggleCamera()">🔄 切換鏡頭</button>
+    <button class="btn" onclick="toggleCamera()">🔄 切換前後鏡頭</button>
     <label class="btn" for="upload-A">📁 上傳影片 A</label>
     <input type="file" id="upload-A" accept="video/*" hidden onchange="handleFile(event, 'A')">
     <label class="btn" for="upload-B">📁 上傳影片 B</label>
@@ -48,17 +49,17 @@
   </div>
 
   <div id="sync-controls" class="hidden">
-    <button class="btn" id="sync-btn" style="background:#00FF00; color:#000; padding: 10px 30px;" onclick="togglePlaySync()">▶ 同步播放 / 暫停</button>
+    <button class="btn" id="sync-btn" style="background:#00FF00; color:#000; padding: 10px 40px; font-size: 14px;" onclick="togglePlaySync()">▶ 同步播放 / 暫停</button>
   </div>
 
   <div class="comparison-container">
     <div class="video-slot" id="slot-A">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-A"><div style="color:#00FF00">分析 A 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <div class="overlay" id="overlay-A"><div style="color:#00FF00">深度分析影片 A 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
         <video id="video-A" playsinline muted></video>
         <canvas id="canvas-A"></canvas>
       </div>
-      <input type="range" class="custom-progress hidden" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')" onchange="manualSeek('A')">
+      <input type="range" class="custom-progress hidden" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')">
       <div class="slot-dash">
         <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-A" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-A" class="mini-val">--°</div></div>
@@ -67,11 +68,11 @@
 
     <div class="video-slot hidden" id="slot-B">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-B"><div style="color:#00FF00">分析 B 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
+        <div class="overlay" id="overlay-B"><div style="color:#00FF00">深度分析影片 B 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
         <video id="video-B" playsinline muted></video>
         <canvas id="canvas-B"></canvas>
       </div>
-      <input type="range" class="custom-progress" id="progress-B" min="0" max="100" value="0" oninput="manualSeek('B')" onchange="manualSeek('B')">
+      <input type="range" class="custom-progress" id="progress-B" min="0" max="100" value="0" oninput="manualSeek('B')">
       <div class="slot-dash">
         <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-B" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-B" class="mini-val">--°</div></div>
@@ -81,8 +82,8 @@
 
   <script>
     const slots = {
-      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, isProcessing: false },
-      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, isProcessing: false }
+      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null },
+      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null }
     };
 
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
@@ -91,14 +92,15 @@
     let camera = null;
     let currentFacingMode = "environment";
     let isLiveMode = false;
+    let globalAiBusy = false; // 全域鎖定
     let currentCallbackTarget = null;
 
     pose.onResults((results) => {
       if (currentCallbackTarget && slots[currentCallbackTarget]) {
         slots[currentCallbackTarget].lastRes = results;
         updateUI(currentCallbackTarget, results.poseLandmarks);
-        slots[currentCallbackTarget].isProcessing = false;
       }
+      globalAiBusy = false; // 處理完畢，釋放鎖定
     });
 
     async function activateLiveMode() {
@@ -110,8 +112,8 @@
       slots.A.vid.srcObject = null;
       camera = new Camera(slots.A.vid, {
         onFrame: async () => {
-          if (isLiveMode && !slots.A.isProcessing) {
-            slots.A.isProcessing = true;
+          if (isLiveMode && !globalAiBusy) {
+            globalAiBusy = true;
             currentCallbackTarget = 'A';
             await pose.send({ image: slots.A.vid });
           }
@@ -146,32 +148,29 @@
 
       await new Promise(r => slot.vid.onloadeddata = r);
       const duration = slot.vid.duration;
-      const step = 0.15;
+      const step = 0.15; // 深度分析步進
 
       for (let t = 0; t <= duration; t += step) {
         slot.vid.currentTime = t;
         await new Promise(res => { slot.vid.onseeked = res; });
-        slot.isProcessing = true;
+        globalAiBusy = true;
         currentCallbackTarget = id;
         await pose.send({ image: slot.vid });
         slot.fill.style.width = (t / duration * 100) + "%";
       }
       slot.ovl.style.display = 'none';
       slot.vid.currentTime = 0;
-      slot.isProcessing = false;
     }
 
-    // --- 關鍵修正：拖動進度條時同步更新骨架 ---
+    // 拖動時同步更新骨架
     async function manualSeek(id) {
       const slot = slots[id];
-      const targetTime = (slot.prog.value / 100) * slot.vid.duration;
-      slot.vid.currentTime = targetTime;
-
-      // 當影片正在 Seek 時，等待 seeked 事件後立即要求 AI 分析該影格
+      slot.vid.currentTime = (slot.prog.value / 100) * slot.vid.duration;
+      
       const onSeekedOnce = async () => {
         slot.vid.removeEventListener('seeked', onSeekedOnce);
-        if (!slot.isProcessing) {
-          slot.isProcessing = true;
+        if (!globalAiBusy) {
+          globalAiBusy = true;
           currentCallbackTarget = id;
           await pose.send({ image: slot.vid });
         }
@@ -211,8 +210,11 @@
           
           if (!slot.vid.paused && slot.vid.duration) {
             slot.prog.value = (slot.vid.currentTime / slot.vid.duration) * 100;
-            if (!isLiveMode && !slot.isProcessing && frameCount % 3 === 0) {
-                slot.isProcessing = true;
+            
+            // 關鍵：交錯請求 AI (A 奇數幀, B 偶數幀) 且必須 AI 不忙碌
+            const myTurn = (id === 'A' && frameCount % 6 === 0) || (id === 'B' && frameCount % 6 === 3);
+            if (!isLiveMode && myTurn && !globalAiBusy) {
+                globalAiBusy = true;
                 currentCallbackTarget = id;
                 pose.send({ image: slot.vid });
             }
