@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 穩定修復版</title>
+  <title>射箭 Pro AI - 完整功能修復版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -19,7 +19,7 @@
     canvas { width: 100%; border-radius: 12px; background: #000; }
     video { display: none; }
     #upload-input { display: none; }
-    .status-msg { position: absolute; top: 10px; left: 10px; font-weight: bold; color: #FF3B30; z-index: 10; font-size: 24px; }
+    .status-msg { position: absolute; top: 20px; width: 100%; text-align: center; font-weight: bold; color: #FF3B30; z-index: 10; font-size: 32px; text-shadow: 2px 2px 4px #000; pointer-events: none; }
   </style>
 </head>
 <body>
@@ -34,6 +34,8 @@
   <div class="dashboard">
     <div class="data-card"><div class="data-label">後手肘角度</div><div id="elbow-val" class="data-value">--°</div></div>
     <div class="data-card"><div class="data-label">開弓直線度</div><div id="align-val" class="data-value">--%</div></div>
+    <div class="data-card"><div class="data-label">軀幹垂直</div><div id="torso-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">頭部狀態</div><div id="head-val" class="data-value">--</div></div>
   </div>
 
   <div class="canvas-container">
@@ -54,7 +56,18 @@
     let frameCounter = 0;
     const FRAME_SKIP = 3; 
 
-    // 初始化 Pose 模型
+    // 邏輯變數
+    let lastElbowX = 0;
+    let baseHeadPos = null;
+
+    function calculateAngle(a, b, c) {
+      if(!a || !b || !c) return 0;
+      const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+      let angle = Math.abs(radians * 180.0 / Math.PI);
+      if (angle > 180.0) angle = 360 - angle;
+      return angle;
+    }
+
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
@@ -68,87 +81,105 @@
 
     pose.onResults((results) => {
       lastResults = results;
-      updateMetrics(results);
+      if (results.poseLandmarks) {
+        updateAnalysis(results.poseLandmarks);
+      }
     });
 
-    // 核心繪圖與分析循環
+    function updateAnalysis(lm) {
+      // 1. 判斷慣用手 (以手肘位置較高者為後手)
+      const isRightHanded = lm[14].y < lm[13].y; 
+      const backElbow = isRightHanded ? lm[14] : lm[13];
+      const backShoulder = isRightHanded ? lm[12] : lm[11];
+      const backWrist = isRightHanded ? lm[16] : lm[15];
+
+      // 2. 計算後手肘角度
+      const elbowAngle = calculateAngle(backShoulder, backElbow, backWrist);
+      
+      // 3. 計算直線度 (肩膀與手肘的水平偏差)
+      const alignmentError = Math.abs(backElbow.y - backShoulder.y);
+      const alignScore = Math.max(0, Math.round(100 - alignmentError * 600));
+
+      // 4. 軀幹垂直度 (肩膀中點到髖部中點)
+      const sMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
+      const hMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
+      const torsoAngle = calculateAngle({x: sMid.x, y: 0}, sMid, hMid);
+
+      // 5. 頭部穩定度
+      if (!baseHeadPos) baseHeadPos = lm[0].y;
+      const headStatus = Math.abs(lm[0].y - baseHeadPos) > 0.03 ? "⚠️ 晃動" : "✅ 穩定";
+
+      // 6. 撒放偵測
+      if (lastElbowX !== 0 && Math.abs(backElbow.x - lastElbowX) > 0.04) {
+        releaseMsg.innerText = "💥 RELEASE!";
+        setTimeout(() => { releaseMsg.innerText = ""; }, 1000);
+      }
+      lastElbowX = backElbow.x;
+
+      // 更新 UI
+      document.getElementById('elbow-val').innerText = Math.round(elbowAngle) + "°";
+      document.getElementById('align-val').innerText = alignScore + "%";
+      document.getElementById('torso-val').innerText = Math.round(torsoAngle) + "°";
+      document.getElementById('head-val').innerText = headStatus;
+    }
+
     function draw() {
-      if (videoElement.paused || videoElement.ended) {
-        requestAnimationFrame(draw);
-        return;
+      // 只有在影片有數據時才繪製
+      if (videoElement.readyState >= 2) {
+        if (canvasElement.width !== videoElement.videoWidth) {
+          canvasElement.width = videoElement.videoWidth;
+          canvasElement.height = videoElement.videoHeight;
+        }
+
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (lastResults && lastResults.poseLandmarks) {
+          drawConnectors(canvasCtx, lastResults.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+          drawLandmarks(canvasCtx, lastResults.poseLandmarks, {color: '#FFFFFF', radius: 1});
+        }
+        canvasCtx.restore();
+
+        frameCounter++;
+        if (frameCounter % FRAME_SKIP === 0) {
+          pose.send({ image: videoElement });
+        }
       }
-
-      // 自動調整 Canvas 尺寸以匹配影片
-      if (canvasElement.width !== videoElement.videoWidth) {
-        canvasElement.width = videoElement.videoWidth;
-        canvasElement.height = videoElement.videoHeight;
-      }
-
-      canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-
-      if (lastResults && lastResults.poseLandmarks) {
-        drawConnectors(canvasCtx, lastResults.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-        drawLandmarks(canvasCtx, lastResults.poseLandmarks, {color: '#FFFFFF', radius: 1});
-      }
-      canvasCtx.restore();
-
-      // 每隔幾幀進行一次分析
-      frameCounter++;
-      if (frameCounter % FRAME_SKIP === 0) {
-        pose.send({ image: videoElement });
-      }
-
       requestAnimationFrame(draw);
     }
 
-    function updateMetrics(results) {
-      if (!results.poseLandmarks) return;
-      const lm = results.poseLandmarks;
-      // 簡單角度與直線計算邏輯 (略)
-      document.getElementById('elbow-val').innerText = "計算中..."; 
-    }
-
-    // 關鍵修正：確保影片上傳後正確重啟流程
     async function loadVideo(event) {
       const file = event.target.files[0];
       if (!file) return;
-
-      // 1. 停止目前的攝影機
-      if (camera) {
-        await camera.stop();
-        camera = null;
-      }
-
-      // 2. 載入影片
-      const url = URL.createObjectURL(file);
-      videoElement.src = url;
+      if (camera) { await camera.stop(); camera = null; }
       
-      videoElement.onloadedmetadata = () => {
+      videoElement.src = URL.createObjectURL(file);
+      videoElement.onloadeddata = () => {
         videoElement.play();
-        draw(); // 啟動繪圖循環
+        baseHeadPos = null; // 上傳新影片重置參考點
       };
     }
 
     async function startCamera() {
       camera = new Camera(videoElement, {
-        onFrame: async () => { /* 交給 draw() 處理 */ },
+        onFrame: async () => {}, // 統一由 draw 處理
         facingMode: currentFacingMode,
         width: 640,
         height: 480
       });
       camera.start();
-      draw();
     }
+
+    window.onload = () => {
+      startCamera();
+      draw(); // 啟動繪圖循環
+    };
 
     function switchCamera() {
       currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
       startCamera();
     }
-
-    // 初始啟動
-    window.onload = startCamera;
   </script>
 </body>
 </html>
