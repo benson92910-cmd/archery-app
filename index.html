@@ -2,153 +2,89 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>射箭動作分析 Pro - 程式夥伴</title>
+  <title>射箭全方位分析 - 程式夥伴</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
     body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-    .controls { padding: 15px; background: #333; width: 100%; display: flex; justify-content: center; gap: 10px; }
-    canvas { width: 95%; max-width: 800px; border: 2px solid #555; border-radius: 8px; margin-top: 10px; }
+    canvas { width: 100%; max-width: 640px; border-radius: 15px; margin-top: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
     video { display: none; }
-    button, input[type="file"] { padding: 10px; border-radius: 5px; border: none; cursor: pointer; }
-    #upload-btn { background: #007bff; color: white; }
-    .angle-display { font-size: 24px; color: #00ff00; margin: 10px; font-weight: bold; }
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 15px; width: 100%; max-width: 600px; }
+    .data-card { background: #333; padding: 10px; border-radius: 8px; text-align: center; border-left: 4px solid #00FF00; }
+    .data-label { font-size: 12px; color: #aaa; }
+    .data-value { font-size: 20px; font-weight: bold; }
   </style>
 </head>
 <body>
-
-  <div class="controls">
-    <input type="file" id="file-upload" accept="video/*">
-    <button id="camera-btn" style="background: #28a745; color: white;">切換相機</button>
+  <div class="dashboard">
+    <div class="data-card"><div class="data-label">後手肘角度</div><div id="elbow-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">軀幹垂直度</div><div id="torso-val" class="data-value">--°</div></div>
   </div>
-
-  <div class="angle-display" id="angle-text">手肘角度: --°</div>
-  
-  <video id="input_video" playsinline></video>
-  <canvas id="output_canvas"></canvas>
+  <video class="input_video"></video>
+  <canvas class="output_canvas"></canvas>
 
   <script>
-    const videoElement = document.getElementById('input_video');
-    const canvasElement = document.getElementById('output_canvas');
+    const videoElement = document.getElementsByClassName('input_video')[0];
+    const canvasElement = document.getElementsByClassName('output_canvas')[0];
     const canvasCtx = canvasElement.getContext('2d');
-    const angleText = document.getElementById('angle-text');
-    const fileUpload = document.getElementById('file-upload');
-
-    // 計算角度的函數
-    function calculateAngle(a, b, c) {
-      const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-      let angle = Math.abs((radians * 180.0) / Math.PI);
-      if (angle > 180.0) angle = 360 - angle;
-      return angle.toFixed(1);
+    
+    // 計算角度的輔助函式
+    function getAngle(p1, p2, p3) {
+      const rad = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
+      let angle = Math.abs(rad * 180.0 / Math.PI);
+      if (angle > 180) angle = 360 - angle;
+      return angle;
     }
 
     function onResults(results) {
+      if (!results.poseLandmarks) return;
+      
       canvasElement.width = videoElement.videoWidth;
       canvasElement.height = videoElement.videoHeight;
+
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-      if (results.poseLandmarks) {
-        // 抓取肩膀(11)、手肘(13)、手腕(15)
-        const shoulder = results.poseLandmarks[11];
-        const elbow = results.poseLandmarks[13];
-        const wrist = results.poseLandmarks[15];
+      const lm = results.poseLandmarks;
 
-        const angle = calculateAngle(shoulder, elbow, wrist);
-        angleText.innerText = `手肘角度: ${angle}°`;
+      // --- 核心分析數據 ---
+      // 1. 手肘分析 (以左手拉弓為例，可視需求調整)
+      const lElbowAngle = getAngle(lm[11], lm[13], lm[15]);
+      document.getElementById('elbow-val').innerText = Math.round(lElbowAngle) + "°";
 
-        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
-        drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 2, radius: 4});
-      }
-      canvasCtx.restore();
+      // 2. 軀幹垂直度 (肩膀中點對比髖部中點)
+      const sMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
+      const hMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
+      const torsoAngle = getAngle(sMid, hMid, {x: hMid.x, y: 0});
+      document.getElementById('torso-val').innerText = Math.round(torsoAngle) + "°";
+
+      // --- 繪圖回饋 ---
+      drawConnectors(canvasCtx, lm, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
       
-      // 如果是影片檔案，持續要求下一幀
-      if (!videoElement.paused && !videoElement.ended) {
-        requestAnimationFrame(() => pose.send({image: videoElement}));
-      }
+      // 特別標記雙腳與軀幹
+      const drawPoints = [11, 12, 13, 14, 23, 24, 25, 26, 27, 28]; // 肩、肘、髖、膝、踝
+      drawPoints.forEach(i => {
+        const p = lm[i];
+        canvasCtx.beginPath();
+        canvasCtx.arc(p.x * canvasElement.width, p.y * canvasElement.height, 5, 0, 2 * Math.PI);
+        canvasCtx.fillStyle = "#00FF00";
+        canvasCtx.fill();
+      });
+
+      canvasCtx.restore();
     }
 
     const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
     pose.onResults(onResults);
 
-    // 處理影片上傳
-    fileUpload.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      const url = URL.createObjectURL(file);
-      videoElement.src = url;
-      videoElement.play();
-      videoElement.onplay = () => pose.send({image: videoElement});
+    const camera = new Camera(videoElement, {
+      onFrame: async () => { await pose.send({image: videoElement}); },
+      width: 640, height: 480
     });
-
-    // 啟動相機 (簡易版)
-    document.getElementById('camera-btn').addEventListener('click', () => {
-      navigator.mediaDevices.getUserMedia({video: true}).then(stream => {
-        videoElement.srcObject = stream;
-        videoElement.play();
-        videoElement.onplay = () => {
-          const process = async () => {
-            if(!videoElement.srcObject) return;
-            await pose.send({image: videoElement});
-            requestAnimationFrame(process);
-          };
-          process();
-        };
-      });
-    });
+    camera.start();
   </script>
 </body>
 </html>
-function onResults(results) {
-  if (!results.poseLandmarks) return;
-
-  canvasCtx.save();
-  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-  canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-  const lm = results.poseLandmarks;
-
-  // --- 1. 定義計算函式 ---
-  function drawAngle(p1, p2, p3, label) {
-    const angle = calculateAngle(p1, p2, p3);
-    canvasCtx.fillStyle = "#00FF00";
-    canvasCtx.font = "18px Arial";
-    // 將座標轉換為畫布像素位置
-    canvasCtx.fillText(`${label}: ${Math.round(angle)}°`, p2.x * canvasElement.width, p2.y * canvasElement.height - 10);
-    return angle;
-  }
-
-  // --- 2. 執行各部位分析 ---
-  
-  // A. 手臂分析 (前手與後手)
-  // 左手：11(肩), 13(肘), 15(腕) | 右手：12(肩), 14(肘), 16(腕)
-  drawAngle(lm[11], lm[13], lm[15], "左手肘");
-  drawAngle(lm[12], lm[14], lm[16], "右手肘");
-
-  // B. 軀幹分析 (肩膀中點與髖部中點的垂直夾角)
-  // 肩膀中點(11,12), 髖部中點(23,24)
-  const shoulderMid = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2 };
-  const hipMid = { x: (lm[23].x + lm[24].x) / 2, y: (lm[23].y + lm[24].y) / 2 };
-  const verticalPoint = { x: hipMid.x, y: 0 }; // 建立一個垂直參考點
-  const bodyAngle = calculateAngle(shoulderMid, hipMid, verticalPoint);
-  canvasCtx.fillText(`軀幹垂直度: ${Math.round(bodyAngle)}°`, hipMid.x * canvasElement.width, hipMid.y * canvasElement.height + 20);
-
-  // C. 雙腳分析 (髖部到腳踝的站立角度)
-  drawAngle(lm[23], lm[25], lm[27], "左膝角");
-  drawAngle(lm[24], lm[26], lm[28], "右膝角");
-
-  // --- 3. 繪製骨架連接線 ---
-  drawConnectors(canvasCtx, lm, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
-  drawLandmarks(canvasCtx, lm, {color: '#FF0000', lineWidth: 1, radius: 3});
-
-  canvasCtx.restore();
-}
-
-// 基礎數學：計算三點間夾角
-function calculateAngle(a, b, c) {
-  const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-  let angle = Math.abs(radians * 180.0 / Math.PI);
-  if (angle > 180.0) angle = 360 - angle;
-  return angle;
-}
