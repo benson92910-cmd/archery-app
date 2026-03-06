@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - iPhone 17 旗艦版</title>
+  <title>射箭 Pro AI - 平衡穩定版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -55,7 +55,7 @@
   <div class="comparison-container">
     <div class="video-slot" id="slot-A">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">高速分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">AI 分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
         <video id="video-A" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-A"></canvas>
       </div>
@@ -72,7 +72,7 @@
 
     <div class="video-slot hidden" id="slot-B">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">高速分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
+        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">AI 分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
         <video id="video-B" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-B"></canvas>
       </div>
@@ -94,24 +94,23 @@
       B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null }
     };
 
+    // 性能下修：使用 Complexity 1 (平衡模式) 確保 WebGL 不崩潰
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-    
-    // iPhone 17 高性能配置
     pose.setOptions({ 
-        modelComplexity: 2, 
+        modelComplexity: 1, 
         smoothLandmarks: true, 
         minDetectionConfidence: 0.5, 
         minTrackingConfidence: 0.5 
     });
 
-    let camera = null, isLive = false, aiBusy = { A: false, B: false }, currentId = null, facing = "environment";
+    let camera = null, isLive = false, aiBusy = false, currentId = null, facing = "environment";
 
     pose.onResults((res) => {
       if (currentId && slots[currentId]) {
         slots[currentId].lastRes = res;
         updateUI(currentId, res.poseLandmarks);
       }
-      aiBusy[currentId] = false;
+      aiBusy = false;
     });
 
     function getAng(p1, p2, p3) {
@@ -162,14 +161,13 @@
       await s.vid.load();
 
       const dur = s.vid.duration;
-      // iPhone 17 高速分析 (0.2s 步進)
-      for (let t = 0; t <= dur; t += 0.2) {
+      for (let t = 0; t <= dur; t += 0.3) {
         s.vid.currentTime = t;
         await new Promise(r => s.vid.onseeked = r);
-        currentId = id; aiBusy[id] = true;
+        currentId = id; aiBusy = true;
         await pose.send({ image: s.vid });
         s.fill.style.width = Math.round((t/dur)*100) + "%";
-        document.getElementById(`msg-${id}`).innerText = `高速分析中 ${Math.round((t/dur)*100)}%`;
+        document.getElementById(`msg-${id}`).innerText = `分析中 ${Math.round((t/dur)*100)}%`;
       }
       s.ovl.style.display = 'none';
       s.vid.currentTime = 0;
@@ -181,9 +179,9 @@
       if (camera) await camera.stop();
       camera = new Camera(slots.A.vid, {
         onFrame: async () => {
-          if (isLive && !aiBusy.A) { aiBusy.A = true; currentId = 'A'; await pose.send({ image: slots.A.vid }); }
+          if (isLive && !aiBusy) { aiBusy = true; currentId = 'A'; await pose.send({ image: slots.A.vid }); }
         },
-        facingMode: facing, width: 1280, height: 720
+        facingMode: facing, width: 960, height: 540 // 略微調降解析度提升穩定度
       });
       camera.start();
     }
@@ -206,13 +204,13 @@
                 elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]),
                 fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24])
             };
-            alert("基準點已鎖定，開始監控穩定度！");
+            alert("基準鎖定成功！");
         }
     }
 
     async function manualSeek(id) {
         slots[id].vid.currentTime = (slots[id].prog.value / 100) * slots[id].vid.duration;
-        currentId = id; await pose.send({ image: slots[id].vid });
+        currentId = id; aiBusy = true; await pose.send({ image: slots[id].vid });
     }
 
     function draw() {
@@ -225,16 +223,16 @@
           
           if (!s.vid.paused && s.vid.duration) {
             s.prog.value = (s.vid.currentTime / s.vid.duration) * 100;
-            // 全速偵測：只要 AI 不忙碌就發送畫面
-            if (!aiBusy[id]) { 
-                aiBusy[id] = true; 
+            // 控制播放中的 AI 偵測頻率，避免 GPU 塞車
+            if (!aiBusy && Math.floor(s.vid.currentTime*10)%2 === 0) { 
+                aiBusy = true; 
                 currentId = id; 
                 pose.send({image: s.vid}); 
             }
           }
           if (s.lastRes?.poseLandmarks) {
-            drawConnectors(s.ctx, s.lastRes.poseLandmarks, POSE_CONNECTIONS, {color:'#00FF00', lineWidth:3});
-            drawLandmarks(s.ctx, s.lastRes.poseLandmarks, {color:'#FFF', radius:2});
+            drawConnectors(s.ctx, s.lastRes.poseLandmarks, POSE_CONNECTIONS, {color:'#00FF00', lineWidth:2});
+            drawLandmarks(s.ctx, s.lastRes.poseLandmarks, {color:'#FFF', radius:1});
           }
         }
       });
