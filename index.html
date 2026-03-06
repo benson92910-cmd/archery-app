@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 完整整合版</title>
+  <title>射箭 Pro AI - 高幀率整合版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -28,14 +28,14 @@
       justify-content: center; align-items: center; z-index: 100;
     }
     .progress-track { width: 70%; height: 8px; background: #333; border-radius: 4px; margin-top: 15px; overflow: hidden; border: 1px solid #444; }
-    #progress-fill { width: 0%; height: 100%; background: #00FF00; box-shadow: 0 0 15px #00FF00; transition: width 0.1s; }
+    #progress-fill { width: 0%; height: 100%; background: #00FF00; box-shadow: 0 0 15px #00FF00; transition: width 0.05s; }
   </style>
 </head>
 <body>
 
   <div class="controls">
     <button class="btn" onclick="toggleCamera()">🔄 切換鏡頭</button>
-    <label class="btn" for="upload-input">📁 上傳分析影片</label>
+    <label class="btn" for="upload-input">📁 上傳影片 (高FPS分析)</label>
     <input type="file" id="upload-input" accept="video/*" onchange="handleFileUpload(event)">
     <button class="btn" onclick="resetToLive()"><span style="color:#ff4444">●</span> 即時模式</button>
   </div>
@@ -49,10 +49,10 @@
 
   <div class="canvas-container">
     <div id="analysis-overlay">
-      <div style="color:#00FF00; font-weight:bold; font-size: 18px;">🔍 AI 影片深度分析中...</div>
+      <div style="color:#00FF00; font-weight:bold; font-size: 18px;">🔍 AI 高頻採樣分析中...</div>
       <div class="progress-track"><div id="progress-fill"></div></div>
       <div id="percent-text" style="margin-top:10px; color:#00FF00; font-family: monospace; font-size: 20px;">0%</div>
-      <div style="margin-top:5px; color:#666; font-size: 11px;">請稍候，正在逐幀提取動作數據</div>
+      <div style="margin-top:5px; color:#666; font-size: 11px;">正在以 30 FPS 提取動作細節</div>
     </div>
     <video id="input_video" playsinline muted crossorigin="anonymous"></video>
     <canvas id="output_canvas"></canvas>
@@ -90,14 +90,31 @@
       }
     });
 
-    // --- 2. 鏡頭控制 ---
+    // --- 2. 核心運算 ---
+    function getAngle(p1, p2, p3) {
+      if(!p1 || !p2 || !p3) return 0;
+      const rad = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
+      let ang = Math.abs(rad * 180 / Math.PI);
+      return Math.round(ang > 180 ? 360 - ang : ang);
+    }
+
+    function updateMetrics(lm) {
+      const isRight = lm[14].y < lm[13].y;
+      document.getElementById('elbow-val').innerText = getAngle(lm[isRight?12:11], lm[isRight?14:13], lm[isRight?16:15]) + "°";
+      
+      const sMid = { x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2 };
+      const hMid = { x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2 };
+      document.getElementById('torso-val').innerText = getAngle({x:sMid.x, y:0}, sMid, hMid) + "°";
+      
+      document.getElementById('lknee-val').innerText = getAngle(lm[23], lm[25], lm[27]) + "°";
+      document.getElementById('rknee-val').innerText = getAngle(lm[24], lm[26], lm[28]) + "°";
+    }
+
+    // --- 3. 影片與鏡頭管理 ---
     async function startApp() {
-      if (camera) {
-        await camera.stop();
-      }
+      if (camera) await camera.stop();
       camera = new Camera(videoElement, {
         onFrame: async () => {
-          // 只有在非分析影片狀態下才透過 Camera 傳送偵測
           if (!isAnalyzing && videoElement.srcObject) {
             await pose.send({ image: videoElement });
           }
@@ -110,26 +127,21 @@
 
     async function toggleCamera() {
       currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-      // 清除影片路徑以便重新切換回鏡頭串流
       videoElement.src = "";
       videoElement.srcObject = null;
       await startApp();
     }
 
     function resetToLive() {
-      location.reload(); // 最徹底的即時模式重設
+      location.reload();
     }
 
-    // --- 3. 影片上傳與深度分析邏輯 ---
+    // --- 4. 高幀率影片分析邏輯 ---
     async function handleFileUpload(event) {
       const file = event.target.files[0];
       if (!file) return;
 
-      // 1. 停止鏡頭
-      if (camera) { 
-        await camera.stop(); 
-        camera = null; 
-      }
+      if (camera) { await camera.stop(); camera = null; }
 
       isAnalyzing = true;
       overlay.style.display = 'flex';
@@ -139,16 +151,16 @@
       videoElement.src = url;
       videoElement.load();
 
-      // 等待載入
       await new Promise(r => videoElement.onloadeddata = r);
       
       const duration = videoElement.duration;
-      const step = 0.2; // 每 0.2 秒取一幀進行 AI 分析
+      const targetFPS = 30; // 提高至 30 FPS
+      const step = 1 / targetFPS; 
 
       for (let t = 0; t <= duration; t += step) {
         videoElement.currentTime = t;
         
-        // 【核心修正】精確等待影片 Seek 完成
+        // 等待 Seek 完成
         await new Promise(resolve => {
           const onSeeked = () => {
             videoElement.removeEventListener('seeked', onSeeked);
@@ -157,25 +169,25 @@
           videoElement.addEventListener('seeked', onSeeked);
         });
 
-        // 【核心修正】等待 AI 處理完這一幀才繼續循環
+        // Await AI 運算結果
         await pose.send({ image: videoElement });
         
-        const p = (t / duration) * 100;
-        progressFill.style.width = p + "%";
-        percentText.innerText = Math.round(p) + "%";
+        // 更新進度 (每隔幾幀更新一次文字以減少 DOM 負擔)
+        const progress = (t / duration) * 100;
+        progressFill.style.width = progress + "%";
+        if (Math.round(t / step) % 10 === 0) {
+          percentText.innerText = Math.round(progress) + "%";
+        }
       }
 
-      // 分析結束
       isAnalyzing = false;
       overlay.style.display = 'none';
       videoElement.currentTime = 0;
       videoElement.play();
       
-      // 進入播放處理循環
       playLoop();
     }
 
-    // 影片播放時的偵測循環
     async function playLoop() {
       if (!isAnalyzing && !videoElement.paused && !videoElement.ended && !videoElement.srcObject) {
         await pose.send({ image: videoElement });
@@ -183,28 +195,6 @@
       requestAnimationFrame(playLoop);
     }
 
-    // --- 4. 運算與繪圖邏輯 ---
-    function getAngle(p1, p2, p3) {
-      if(!p1 || !p2 || !p3) return 0;
-      const rad = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
-      let ang = Math.abs(rad * 180 / Math.PI);
-      return Math.round(ang > 180 ? 360 - ang : ang);
-    }
-
-    function updateMetrics(lm) {
-      // 判定持弓手（以手肘位置較高者為後手肘）
-      const isRight = lm[14].y < lm[13].y;
-      document.getElementById('elbow-val').innerText = getAngle(lm[isRight?12:11], lm[isRight?14:13], lm[isRight?16:15]) + "°";
-      
-      const sMid = { x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2 };
-      const hMid = { x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2 };
-      document.getElementById('torso-val').innerText = getAngle({x:sMid.x, y:0}, sMid, hMid) + "°";
-      
-      document.getElementById('lknee-val').innerText = getAngle(lm[23], lm[25], lm[27]) + "°";
-      document.getElementById('rknee-val').innerText = getAngle(lm[24], lm[26], lm[28]) + "°";
-    }
-
-    // 畫布渲染循環
     function mainLoop() {
       if (videoElement.readyState >= 2) {
         canvasElement.width = videoElement.videoWidth;
@@ -223,7 +213,6 @@
       requestAnimationFrame(mainLoop);
     }
 
-    // --- 5. 啟動 ---
     window.onload = () => {
       startApp();
       mainLoop();
