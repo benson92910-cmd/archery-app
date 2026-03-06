@@ -3,43 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 介面還原版</title>
+  <title>射箭 Pro AI - 極速加速版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
     body { margin: 0; background: #121212; color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; align-items: center; }
-    
-    /* 上方控制列 */
     .controls { display: flex; gap: 10px; padding: 20px 10px; width: 100%; justify-content: center; }
     .btn { background: #333; color: white; padding: 10px 15px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 5px; }
     #upload-input { display: none; }
-
-    /* 四宮格儀表板 */
     .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 92%; margin-bottom: 15px; }
-    .data-card { 
-      background: #222; padding: 15px; border-radius: 12px; text-align: center; 
-      border: 1px solid #00FF00; box-shadow: 0 0 10px rgba(0, 255, 0, 0.2);
-    }
+    .data-card { background: #222; padding: 15px; border-radius: 12px; text-align: center; border: 1px solid #00FF00; box-shadow: 0 0 10px rgba(0, 255, 0, 0.2); }
     .data-label { font-size: 13px; color: #aaa; margin-bottom: 5px; }
     .data-value { font-size: 24px; font-weight: bold; color: #fff; }
-
-    /* 影片區域 */
     .canvas-container { position: relative; width: 92%; max-width: 640px; border-radius: 20px; overflow: hidden; border: 2px solid #333; }
     canvas { width: 100%; display: block; background: #000; }
     video { display: none; }
-
-    /* 載入遮罩 - 匹配截圖 */
-    #loading-overlay {
-      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      background: rgba(0, 0, 0, 0.8); padding: 20px; border-radius: 15px;
-      border: 2px solid #00FF00; text-align: center; z-index: 100;
-      width: 60%; display: none;
-    }
-    .spin { animation: rotation 2s infinite linear; display: inline-block; }
+    #loading-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.85); padding: 25px; border-radius: 15px; border: 2px solid #00FF00; text-align: center; z-index: 100; width: 65%; display: none; }
+    .spin { animation: rotation 1.5s infinite linear; display: inline-block; font-size: 30px; }
     @keyframes rotation { from { transform: rotate(0deg); } to { transform: rotate(359deg); } }
-
-    .release-hint { position: absolute; top: 20px; width: 100%; text-align: center; color: #FF3B30; font-size: 32px; font-weight: bold; pointer-events: none; }
+    .release-hint { position: absolute; top: 20px; width: 100%; text-align: center; color: #FF3B30; font-size: 32px; font-weight: bold; pointer-events: none; text-shadow: 2px 2px 4px #000; }
   </style>
 </head>
 <body>
@@ -60,9 +43,9 @@
 
   <div class="canvas-container">
     <div id="loading-overlay">
-      <div class="spin" style="font-size: 30px;">⚙️</div>
-      <div style="margin-top: 10px; font-weight: bold;">AI 高速分析中...</div>
-      <div style="font-size: 12px; color: #aaa;">請稍候數秒</div>
+      <div class="spin">⚙️</div>
+      <div style="margin-top: 12px; font-weight: bold; letter-spacing: 1px;">AI 極速分析中...</div>
+      <div style="font-size: 11px; color: #00FF00; margin-top: 5px;">Optimizing Performance</div>
     </div>
     <div id="release-msg" class="release-hint"></div>
     <video class="input_video" playsinline muted crossorigin="anonymous"></video>
@@ -76,10 +59,16 @@
     const loadingOverlay = document.getElementById('loading-overlay');
     const releaseMsg = document.getElementById('release-msg');
     
+    // ⚡ 加速專用：隱藏的小畫布
+    const offscreenCanvas = document.createElement('canvas');
+    const offscreenCtx = offscreenCanvas.getContext('2d');
+    const AI_INPUT_SIZE = 256; // 縮小到 256px 運算，速度提升顯著
+
     let camera = null;
     let currentFacingMode = "environment";
     let lastResults = null;
-    let isProcessing = false;
+    let frameCounter = 0;
+    let lastElbowX = 0;
 
     function calculateAngle(a, b, c) {
       if(!a || !b || !c) return 0;
@@ -93,30 +82,27 @@
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
 
-    pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.setOptions({
+      modelComplexity: 0, 
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
 
     pose.onResults((results) => {
       lastResults = results;
-      if (isProcessing) {
-        loadingOverlay.style.display = 'none';
-        isProcessing = false;
-      }
-      updateUI(results.poseLandmarks);
+      loadingOverlay.style.display = 'none';
+      if (results.poseLandmarks) updateUI(results.poseLandmarks);
     });
 
     function updateUI(lm) {
-      if (!lm) return;
-      
-      // 1. 後手肘 (依肩部高度判定)
       const isRight = lm[14].y < lm[13].y;
       const elbow = calculateAngle(lm[isRight?12:11], lm[isRight?14:13], lm[isRight?16:15]);
       
-      // 2. 軀幹角度
       const sMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
       const hMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
       const torso = calculateAngle({x: sMid.x, y: 0}, sMid, hMid);
 
-      // 3. 膝蓋角度
       const lKnee = calculateAngle(lm[23], lm[25], lm[27]);
       const rKnee = calculateAngle(lm[24], lm[26], lm[28]);
 
@@ -124,22 +110,42 @@
       document.getElementById('torso-val').innerText = torso + "°";
       document.getElementById('lknee-val').innerText = lKnee + "°";
       document.getElementById('rknee-val').innerText = rKnee + "°";
+
+      // 撒放偵測 (使用縮放後的座標依然有效)
+      const backElbowX = lm[isRight?14:13].x;
+      if (lastElbowX !== 0 && Math.abs(backElbowX - lastElbowX) > 0.05) {
+        releaseMsg.innerText = "💥 RELEASE!";
+        setTimeout(() => { releaseMsg.innerText = ""; }, 1000);
+      }
+      lastElbowX = backElbowX;
     }
 
     function drawLoop() {
       if (videoElement.readyState >= 2) {
-        canvasElement.width = videoElement.videoWidth;
-        canvasElement.height = videoElement.videoHeight;
+        // 1. 繪製主畫面
+        if (canvasElement.width !== videoElement.videoWidth) {
+          canvasElement.width = videoElement.videoWidth;
+          canvasElement.height = videoElement.videoHeight;
+        }
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
 
+        // 2. 繪製骨架 (使用暫存結果)
         if (lastResults && lastResults.poseLandmarks) {
           drawConnectors(canvasCtx, lastResults.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
           drawLandmarks(canvasCtx, lastResults.poseLandmarks, {color: '#FFFFFF', radius: 1});
         }
         canvasCtx.restore();
-        pose.send({ image: videoElement });
+
+        // 3. ⚡ 極速分析邏輯：每 3 幀縮放並傳送一次
+        frameCounter++;
+        if (frameCounter % 3 === 0) {
+          offscreenCanvas.width = AI_INPUT_SIZE;
+          offscreenCanvas.height = AI_INPUT_SIZE;
+          offscreenCtx.drawImage(videoElement, 0, 0, AI_INPUT_SIZE, AI_INPUT_SIZE);
+          pose.send({ image: offscreenCanvas });
+        }
       }
       requestAnimationFrame(drawLoop);
     }
@@ -149,15 +155,17 @@
       if (!file) return;
       if (camera) { await camera.stop(); camera = null; }
       
-      isProcessing = true;
       loadingOverlay.style.display = 'block';
       videoElement.src = URL.createObjectURL(file);
-      videoElement.onloadeddata = () => videoElement.play();
+      videoElement.onloadeddata = () => {
+        videoElement.play();
+        lastResults = null; // 清除前一部影片的殘影
+      };
     }
 
     async function startCamera() {
       camera = new Camera(videoElement, {
-        onFrame: async () => {},
+        onFrame: async () => {}, // 邏輯統一在 drawLoop
         facingMode: currentFacingMode,
         width: 640, height: 480
       });
