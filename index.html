@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 全能旗艦版</title>
+  <title>射箭 Pro AI - 穩定比對版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -81,45 +81,44 @@
 
   <script>
     const slots = {
-      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null },
-      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null }
+      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, isProcessing: false },
+      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, isProcessing: false }
     };
 
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
     let camera = null;
-    let activeAnalyzingSlot = null;
     let currentFacingMode = "environment";
     let isLiveMode = false;
+    let currentCallbackTarget = null; // 用來標記當前 onResults 該更新誰
 
     pose.onResults((results) => {
-      if (activeAnalyzingSlot) {
-        slots[activeAnalyzingSlot].lastRes = results;
-        updateUI(activeAnalyzingSlot, results.poseLandmarks);
+      if (currentCallbackTarget && slots[currentCallbackTarget]) {
+        slots[currentCallbackTarget].lastRes = results;
+        updateUI(currentCallbackTarget, results.poseLandmarks);
+        slots[currentCallbackTarget].isProcessing = false;
       }
     });
 
-    // --- 鏡頭邏輯 ---
     async function activateLiveMode() {
       isLiveMode = true;
       document.getElementById('slot-B').classList.add('hidden');
-      document.getElementById('progress-A').classList.add('hidden');
       document.getElementById('sync-controls').classList.add('hidden');
-      
       if (camera) await camera.stop();
+      
       slots.A.vid.src = "";
       slots.A.vid.srcObject = null;
 
       camera = new Camera(slots.A.vid, {
         onFrame: async () => {
-          if (isLiveMode) {
-            activeAnalyzingSlot = 'A';
+          if (isLiveMode && !slots.A.isProcessing) {
+            slots.A.isProcessing = true;
+            currentCallbackTarget = 'A';
             await pose.send({ image: slots.A.vid });
           }
         },
-        facingMode: currentFacingMode,
-        width: 640, height: 480
+        facingMode: currentFacingMode, width: 640, height: 480
       });
       camera.start();
     }
@@ -129,7 +128,6 @@
       if (isLiveMode) activateLiveMode();
     }
 
-    // --- 影片分析邏輯 ---
     async function handleFile(event, id) {
       isLiveMode = false;
       if (camera) { await camera.stop(); camera = null; }
@@ -143,29 +141,30 @@
       }
       document.getElementById(`progress-${id}`).classList.remove('hidden');
 
-      activeAnalyzingSlot = id;
       const slot = slots[id];
       slot.ovl.style.display = 'flex';
+      slot.vid.srcObject = null;
       slot.vid.src = URL.createObjectURL(file);
       slot.vid.load();
 
       await new Promise(r => slot.vid.onloadeddata = r);
       const duration = slot.vid.duration;
-      const step = 0.1; // 10 FPS 分析以平衡效能
+      const step = 0.15; // 稍微降低分析頻率以確保穩定性
 
       for (let t = 0; t <= duration; t += step) {
         slot.vid.currentTime = t;
         await new Promise(res => { slot.vid.onseeked = res; });
+        slot.isProcessing = true;
+        currentCallbackTarget = id;
         await pose.send({ image: slot.vid });
         slot.fill.style.width = (t / duration * 100) + "%";
       }
 
       slot.ovl.style.display = 'none';
       slot.vid.currentTime = 0;
-      activeAnalyzingSlot = null;
+      slot.isProcessing = false;
     }
 
-    // --- 工具與渲染 ---
     function updateUI(id, lm) {
       if (!lm) return;
       const getAng = (p1, p2, p3) => {
@@ -174,16 +173,13 @@
         return Math.round(ang > 180 ? 360 - ang : ang);
       };
       const isR = lm[14].y < lm[13].y;
-      document.getElementById(`elbow-${id}`).innerText = getAng(lm[isR?12:11], lm[isR?14:13], lm[isR?16:15]) + "°";
-      const sM = { x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2 };
-      const hM = { x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2 };
-      document.getElementById(`torso-${id}`).innerText = getAng({x:sM.x, y:0}, sM, hM) + "°";
+      const valEl = document.getElementById(`elbow-${id}`);
+      if(valEl) valEl.innerText = getAng(lm[isR?12:11], lm[isR?14:13], lm[isR?16:15]) + "°";
     }
 
     function togglePlaySync() {
       const vA = slots.A.vid, vB = slots.B.vid;
-      if (vA.paused) { vA.play(); if(vB.src) vB.play(); } 
-      else { vA.pause(); vB.pause(); }
+      if (vA.paused) { vA.play(); if(vB.src) vB.play(); } else { vA.pause(); vB.pause(); }
     }
 
     function manualSeek(id) {
@@ -191,7 +187,9 @@
       slot.vid.currentTime = (slot.prog.value / 100) * slot.vid.duration;
     }
 
+    let frameCount = 0;
     function draw() {
+      frameCount++;
       ['A', 'B'].forEach(id => {
         const slot = slots[id];
         if (slot.vid.readyState >= 2) {
@@ -201,11 +199,12 @@
           
           if (!slot.vid.paused && slot.vid.duration) {
             slot.prog.value = (slot.vid.currentTime / slot.vid.duration) * 100;
-          }
-
-          if (!activeAnalyzingSlot && !slot.vid.paused && !isLiveMode) {
-            activeAnalyzingSlot = id;
-            pose.send({ image: slot.vid }).then(() => { activeAnalyzingSlot = null; });
+            // 播放時每 3 幀請求一次 AI，避免兩部影片搶奪資源
+            if (!isLiveMode && !slot.isProcessing && frameCount % 3 === 0) {
+                slot.isProcessing = true;
+                currentCallbackTarget = id;
+                pose.send({ image: slot.vid });
+            }
           }
 
           if (slot.lastRes && slot.lastRes.poseLandmarks) {
@@ -217,10 +216,7 @@
       requestAnimationFrame(draw);
     }
 
-    window.onload = () => {
-      draw();
-      activateLiveMode(); // 預設開啟即時鏡頭
-    };
+    window.onload = () => { draw(); activateLiveMode(); };
   </script>
 </body>
 </html>
