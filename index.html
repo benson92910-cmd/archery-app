@@ -3,145 +3,280 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 輕量修正版</title>
+  <title>射箭 Pro AI - 穩定比對旗艦版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
-    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; overflow-x: hidden; }
-    .header-controls { padding: 10px; display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; width: 100%; background: #1a1a1a; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid #333; }
-    .btn { background: #222; color: #00FF00; padding: 10px 14px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 13px; font-weight: bold; }
+    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
+    .header-controls { padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: 100%; background: #1a1a1a; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 100; }
+    .btn { background: #222; color: #00FF00; padding: 8px 12px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s; }
+    .btn:active { background: #00FF00; color: #000; }
     .btn-danger { border-color: #ff4444; color: #ff4444; }
-    .comparison-container { display: flex; flex-direction: column; gap: 15px; width: 95%; margin-top: 10px; align-items: center; }
-    .video-slot { width: 100%; max-width: 450px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; }
+    .btn-snap { background: #00FF00; color: #000; grid-column: span 2; margin-top: 5px; border: none; }
+    
+    .comparison-container { display: flex; gap: 10px; width: 95%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; justify-content: center; }
+    .video-slot { flex: 1; min-width: 300px; max-width: 500px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
+    
     .canvas-box { position: relative; width: 100%; aspect-ratio: 9/16; background: #000; border-radius: 8px; overflow: hidden; }
     canvas { width: 100%; height: 100%; object-fit: contain; }
     video { display: none; }
-    .slot-dash { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-    .mini-card { background: #000; padding: 8px; border-radius: 5px; text-align: center; border: 1px solid #444; }
-    .mini-label { font-size: 11px; color: #888; }
-    .mini-val { font-size: 16px; color: #00FF00; font-weight: bold; }
-    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
-    .bar-bg { width: 70%; height: 8px; background: #333; border-radius: 4px; margin-top: 12px; overflow: hidden; }
+
+    .custom-progress { width: 100%; margin: 10px 0; cursor: pointer; accent-color: #00FF00; }
+    
+    .slot-dash { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 8px; }
+    .mini-card { background: #000; padding: 5px; border-radius: 5px; text-align: center; border: 1px solid #444; }
+    .mini-label { font-size: 10px; color: #888; }
+    .mini-val { font-size: 14px; color: #00FF00; font-weight: bold; }
+
+    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; border-radius: 8px; }
+    .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
     .bar-fill { width: 0%; height: 100%; background: #00FF00; }
+
+    #sync-controls { width: 100%; display: flex; justify-content: center; padding: 10px; gap: 10px; }
     .hidden { display: none !important; }
   </style>
 </head>
 <body>
 
   <div class="header-controls">
-    <button class="btn" onclick="activateLiveMode()">📸 鏡頭</button>
-    <label class="btn" for="upload-A">📁 影片 A</label>
+    <button class="btn" onclick="activateLiveMode()">📸 即時鏡頭</button>
+    <button class="btn" onclick="toggleCamera()">🔄 切換前後鏡頭</button>
+    <label class="btn" for="upload-A">📁 上傳影片 A</label>
     <input type="file" id="upload-A" accept="video/*" hidden onchange="handleFile(event, 'A')">
-    <label class="btn" for="upload-B">📁 影片 B</label>
+    <label class="btn" for="upload-B">📁 上傳影片 B</label>
     <input type="file" id="upload-B" accept="video/*" hidden onchange="handleFile(event, 'B')">
     <button class="btn btn-danger" onclick="location.reload()">🔄 重設</button>
+  </div>
+
+  <div id="sync-controls" class="hidden">
+    <button class="btn" id="sync-btn" style="background:#00FF00; color:#000; padding: 10px 40px; font-size: 14px;" onclick="togglePlaySync()">▶ 同步播放 / 暫停</button>
   </div>
 
   <div class="comparison-container">
     <div class="video-slot" id="slot-A">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">讀取中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">分析影片 A 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
         <video id="video-A" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-A"></canvas>
       </div>
+      <input type="range" class="custom-progress hidden" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')">
       <div class="slot-dash">
         <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-A" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-A" class="mini-val">--°</div></div>
-        <button class="btn" style="grid-column: span 2;" onclick="resetBaseline('A')">🎯 鎖定基準</button>
+        <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-A" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">軀幹垂直</div><div id="torso-A" class="mini-val">--°</div></div>
+        <div class="mini-card" style="grid-column: span 2; border-color: #00FF00;">
+            <div class="mini-label">穩定度 (Δ 偏移)</div>
+            <div id="drift-A" class="mini-val">--°</div>
+        </div>
+        <button class="btn btn-snap" onclick="resetBaseline('A')">🎯 鎖定開弓定位</button>
       </div>
     </div>
 
     <div class="video-slot hidden" id="slot-B">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">讀取中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
+        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">分析影片 B 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
         <video id="video-B" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-B"></canvas>
       </div>
+      <input type="range" class="custom-progress" id="progress-B" min="0" max="100" value="0" oninput="manualSeek('B')">
       <div class="slot-dash">
         <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-B" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-B" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-B" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">軀幹垂直</div><div id="torso-B" class="mini-val">--°</div></div>
+        <div class="mini-card" style="grid-column: span 2; border-color: #00FF00;">
+            <div class="mini-label">穩定度 (Δ 偏移)</div>
+            <div id="drift-B" class="mini-val">--°</div>
+        </div>
+        <button class="btn btn-snap" onclick="resetBaseline('B')">🎯 鎖定開弓定位</button>
       </div>
     </div>
   </div>
 
   <script>
     const slots = {
-      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A') },
-      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B') }
+      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null },
+      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null }
     };
 
-    let pose;
-    let isLive = false;
-    let aiBusy = false;
-    let currentTarget = null;
+    const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
-    async function init() {
-      pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-      pose.setOptions({ modelComplexity: 0, smoothLandmarks: true }); // 改用 Complexity 0 以換取流暢度
-      pose.onResults((res) => {
-        if (currentTarget && res.poseLandmarks) {
-          updateUI(currentTarget, res.poseLandmarks);
-          drawPose(currentTarget, res.poseLandmarks);
-        }
-        aiBusy = false;
-      });
+    let camera = null;
+    let currentFacingMode = "environment";
+    let isLiveMode = false;
+    let globalAiBusy = false;
+    let currentCallbackTarget = null;
+
+    pose.onResults((results) => {
+      if (currentCallbackTarget && slots[currentCallbackTarget]) {
+        slots[currentCallbackTarget].lastRes = results;
+        updateUI(currentCallbackTarget, results.poseLandmarks);
+      }
+      globalAiBusy = false;
+    });
+
+    // 核心角度計算
+    function getAng(p1, p2, p3) {
+      const rad = Math.atan2(p3.y-p2.y, p3.x-p2.x) - Math.atan2(p1.y-p2.y, p1.x-p2.x);
+      let ang = Math.abs(rad * 180 / Math.PI);
+      return Math.round(ang > 180 ? 360 - ang : ang);
     }
 
-    function getAng(p1, p2, p3) {
-      const r = Math.atan2(p3.y-p2.y, p3.x-p2.x) - Math.atan2(p1.y-p2.y, p1.x-p2.x);
-      let a = Math.abs(r * 180 / Math.PI);
-      return Math.round(a > 180 ? 360 - a : a);
+    function calculateAllMetrics(lm) {
+      if (!lm) return null;
+      const isR = lm[14].y < lm[13].y; // 自動判別左右手
+      const drawSide = isR ? { s:12, e:14, w:16, h:24 } : { s:11, e:13, w:15, h:23 };
+      const pushSide = isR ? { s:11, e:13, w:15, h:23 } : { s:12, e:14, w:16, h:24 };
+
+      const elbow = getAng(lm[drawSide.s], lm[drawSide.e], lm[drawSide.w]);
+      const fShoulder = getAng(lm[pushSide.e], lm[pushSide.s], lm[pushSide.h]);
+      const bShoulder = getAng(lm[drawSide.e], lm[drawSide.s], lm[drawSide.h]);
+      const sM = { x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2 };
+      const hM = { x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2 };
+      const torso = getAng({x:sM.x, y:0}, sM, hM);
+
+      return { elbow, fShoulder, bShoulder, torso };
     }
 
     function updateUI(id, lm) {
-      const isR = lm[14].y < lm[13].y; 
-      const drawE = isR ? 14 : 13;
-      const drawS = isR ? 12 : 11;
-      const drawW = isR ? 16 : 15;
-      document.getElementById(`elbow-${id}`).innerText = getAng(lm[drawS], lm[drawE], lm[drawW]) + "°";
-      document.getElementById(`f-shoulder-${id}`).innerText = getAng(lm[isR?13:14], lm[isR?11:12], lm[isR?23:24]) + "°";
-    }
+      const metrics = calculateAllMetrics(lm);
+      if (!metrics) return;
 
-    function drawPose(id, lm) {
-      const s = slots[id];
-      s.ctx.clearRect(0, 0, s.cvs.width, s.cvs.height);
-      s.ctx.drawImage(s.vid, 0, 0, s.cvs.width, s.cvs.height);
-      drawConnectors(s.ctx, lm, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-    }
+      document.getElementById(`elbow-${id}`).innerText = metrics.elbow + "°";
+      document.getElementById(`f-shoulder-${id}`).innerText = metrics.fShoulder + "°";
+      document.getElementById(`b-shoulder-${id}`).innerText = metrics.bShoulder + "°";
+      document.getElementById(`torso-${id}`).innerText = metrics.torso + "°";
 
-    async function handleFile(e, id) {
-      const file = e.target.files[0];
-      if (!file) return;
-      isLive = false;
-      const s = slots[id];
-      if (id === 'B') document.getElementById('slot-B').classList.remove('hidden');
-      
-      s.ovl.style.display = 'flex';
-      s.vid.src = URL.createObjectURL(file);
-      await s.vid.play(); // 先嘗試播放以觸發瀏覽器解碼
-      s.vid.pause();
-
-      const duration = s.vid.duration;
-      for (let t = 0; t <= duration; t += 0.5) { // 增加間隔至 0.5s
-        s.vid.currentTime = t;
-        await new Promise(r => s.vid.onseeked = r);
-        currentTarget = id;
-        aiBusy = true;
-        await pose.send({ image: s.vid });
-        s.fill.style.width = (t / duration * 100) + "%";
-        document.getElementById(`msg-${id}`).innerText = `分析中 ${Math.round(t/duration*100)}%`;
+      // 穩定度計算
+      if (slots[id].baseline) {
+          const b = slots[id].baseline;
+          const drift = Math.abs(metrics.elbow - b.elbow) + 
+                        Math.abs(metrics.fShoulder - b.fShoulder) +
+                        Math.abs(metrics.torso - b.torso);
+          const driftEl = document.getElementById(`drift-${id}`);
+          driftEl.innerText = drift + "°";
+          driftEl.style.color = drift > 7 ? "#ff4444" : "#00FF00";
       }
-      s.ovl.style.display = 'none';
-      s.vid.currentTime = 0;
     }
 
-    function resetBaseline(id) { alert("基準已設定"); }
+    function resetBaseline(id) {
+        if (slots[id].lastRes && slots[id].lastRes.poseLandmarks) {
+            slots[id].baseline = calculateAllMetrics(slots[id].lastRes.poseLandmarks);
+            alert(`已鎖定基準點`);
+        }
+    }
 
-    window.onload = async () => { 
-      await init(); 
-      console.log("AI Ready"); 
-    };
+    // 處理上傳影片 (強化穩定度)
+    async function handleFile(event, id) {
+      isLiveMode = false;
+      if (camera) { await camera.stop(); camera = null; }
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const slot = slots[id];
+      if (id === 'B') {
+        document.getElementById('slot-B').classList.remove('hidden');
+        document.getElementById('sync-controls').classList.remove('hidden');
+      }
+      slot.prog.classList.remove('hidden');
+      slot.ovl.style.display = 'flex';
+      
+      slot.vid.src = URL.createObjectURL(file);
+      await slot.vid.play(); // 強迫觸發解碼
+      slot.vid.pause();
+
+      const duration = slot.vid.duration;
+      // 核心分析迴圈
+      for (let t = 0; t <= duration; t += 0.3) {
+        slot.vid.currentTime = t;
+        await new Promise(res => { slot.vid.onseeked = res; });
+        
+        currentCallbackTarget = id;
+        globalAiBusy = true;
+        await pose.send({ image: slot.vid });
+        
+        const pct = Math.round((t / duration) * 100);
+        slot.fill.style.width = pct + "%";
+        document.getElementById(`msg-${id}`).innerText = `分析中... ${pct}%`;
+      }
+      slot.ovl.style.display = 'none';
+      slot.vid.currentTime = 0;
+    }
+
+    // 手動拖動進度條即時更新
+    async function manualSeek(id) {
+      const slot = slots[id];
+      slot.vid.currentTime = (slot.prog.value / 100) * slot.vid.duration;
+      const onSeekedOnce = async () => {
+        slot.vid.removeEventListener('seeked', onSeekedOnce);
+        if (!globalAiBusy) {
+          globalAiBusy = true;
+          currentCallbackTarget = id;
+          await pose.send({ image: slot.vid });
+        }
+      };
+      slot.vid.addEventListener('seeked', onSeekedOnce);
+    }
+
+    function togglePlaySync() {
+      const vA = slots.A.vid, vB = slots.B.vid;
+      if (vA.paused) { vA.play(); if(vB.src) vB.play(); } 
+      else { vA.pause(); vB.pause(); }
+    }
+
+    function draw() {
+      ['A', 'B'].forEach(id => {
+        const slot = slots[id];
+        if (slot.vid.readyState >= 2) {
+          slot.cvs.width = slot.vid.videoWidth;
+          slot.cvs.height = slot.vid.videoHeight;
+          slot.ctx.drawImage(slot.vid, 0, 0);
+          
+          if (!slot.vid.paused && slot.vid.duration) {
+            slot.prog.value = (slot.vid.currentTime / slot.vid.duration) * 100;
+            // 播放時減少分析頻率以維持流暢
+            if (!globalAiBusy && Math.floor(slot.vid.currentTime * 10) % 3 === 0) {
+                globalAiBusy = true;
+                currentCallbackTarget = id;
+                pose.send({ image: slot.vid });
+            }
+          }
+
+          if (slot.lastRes && slot.lastRes.poseLandmarks) {
+            drawConnectors(slot.ctx, slot.lastRes.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+            drawLandmarks(slot.ctx, slot.lastRes.poseLandmarks, {color: '#FFF', radius: 1});
+          }
+        }
+      });
+      requestAnimationFrame(draw);
+    }
+
+    async function activateLiveMode() {
+      isLiveMode = true;
+      document.getElementById('slot-B').classList.add('hidden');
+      if (camera) await camera.stop();
+      camera = new Camera(slots.A.vid, {
+        onFrame: async () => {
+          if (isLiveMode && !globalAiBusy) {
+            globalAiBusy = true;
+            currentCallbackTarget = 'A';
+            await pose.send({ image: slots.A.vid });
+          }
+        },
+        facingMode: currentFacingMode
+      });
+      camera.start();
+    }
+
+    function toggleCamera() {
+      currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+      if (isLiveMode) activateLiveMode();
+    }
+
+    window.onload = () => { draw(); activateLiveMode(); };
   </script>
 </body>
 </html>
