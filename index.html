@@ -3,104 +3,112 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>射箭全方位分析 - 程式夥伴</title>
+  <title>射箭 Pro 分析儀 - 程式夥伴</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
-    body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; overflow-x: hidden; }
-    .header { padding: 15px; font-size: 20px; font-weight: bold; color: #00FF00; }
-    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; width: 95%; max-width: 600px; }
-    .data-card { background: #333; padding: 10px; border-radius: 8px; text-align: center; border-bottom: 3px solid #00FF00; }
-    .data-label { font-size: 12px; color: #aaa; margin-bottom: 5px; }
-    .data-value { font-size: 18px; font-weight: bold; }
-    canvas { width: 95%; max-width: 640px; border-radius: 10px; margin-top: 10px; border: 2px solid #444; }
+    body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
+    .controls { display: flex; gap: 10px; padding: 10px; flex-wrap: wrap; justify-content: center; }
+    button, label { background: #444; color: white; padding: 8px 15px; border-radius: 5px; border: none; cursor: pointer; font-size: 14px; }
+    button:active { background: #666; }
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 95%; max-width: 600px; margin-bottom: 10px; }
+    .data-card { background: #333; padding: 8px; border-radius: 8px; text-align: center; border-bottom: 3px solid #00FF00; }
+    .data-label { font-size: 11px; color: #aaa; }
+    canvas { width: 95%; max-width: 640px; border-radius: 10px; border: 2px solid #444; }
     video { display: none; }
+    #upload-input { display: none; }
   </style>
 </head>
 <body>
-  <div class="header">射箭動作分析系統</div>
+  <div class="controls">
+    <button onclick="switchCamera()">🔄 切換鏡頭</button>
+    <label for="upload-input">📁 上傳影片</label>
+    <input type="file" id="upload-input" accept="video/*" onchange="loadVideo(event)">
+    <button onclick="location.reload()">🔴 重置即時相機</button>
+  </div>
   
   <div class="dashboard">
-    <div class="data-card"><div class="data-label">後手肘角度</div><div id="elbow-val" class="data-value">--°</div></div>
-    <div class="data-card"><div class="data-label">軀幹垂直度</div><div id="torso-val" class="data-value">--°</div></div>
-    <div class="data-card"><div class="data-label">左膝角度</div><div id="lknee-val" class="data-value">--°</div></div>
-    <div class="data-card"><div class="data-label">右膝角度</div><div id="rknee-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">後手肘</div><div id="elbow-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">軀幹垂直</div><div id="torso-val" class="data-value">--°</div></div>
   </div>
 
-  <video class="input_video"></video>
+  <video class="input_video" playsinline></video>
   <canvas class="output_canvas"></canvas>
 
   <script>
-    const videoElement = document.getElementsByClassName('input_video')[0];
-    const canvasElement = document.getElementsByClassName('output_canvas')[0];
+    const videoElement = document.querySelector('.input_video');
+    const canvasElement = document.querySelector('.output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
+    let currentFacingMode = "environment"; // 預設後鏡頭
+    let camera = null;
 
-    // 1. 角度計算工具
-    function calculateAngle(a, b, c) {
-      const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-      let angle = Math.abs(radians * 180.0 / Math.PI);
-      if (angle > 180.0) angle = 360 - angle;
+    // 1. 角度計算
+    function getAngle(p1, p2, p3) {
+      const rad = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
+      let angle = Math.abs(rad * 180.0 / Math.PI);
+      if (angle > 180) angle = 360 - angle;
       return angle;
     }
 
-    // 2. 處理辨識結果
-    function onResults(results) {
-      if (!results.poseLandmarks) return;
-      
-      canvasElement.width = videoElement.videoWidth;
-      canvasElement.height = videoElement.videoHeight;
-
+    // 2. MediaPipe 邏輯
+    const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
+    pose.onResults(results => {
+      canvasElement.width = videoElement.videoWidth || 640;
+      canvasElement.height = videoElement.videoHeight || 480;
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-      const lm = results.poseLandmarks;
-
-      // --- 更新數據面板 ---
-      // 後手肘 (假設右撇子，看右手 12, 14, 16)
-      const rElbow = calculateAngle(lm[12], lm[14], lm[16]);
-      document.getElementById('elbow-val').innerText = Math.round(rElbow) + "°";
-
-      // 軀幹 (肩中點 vs 髖中點)
-      const sMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
-      const hMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
-      const torso = calculateAngle(sMid, hMid, {x: hMid.x, y: 0});
-      document.getElementById('torso-val').innerText = Math.round(torso) + "°";
-
-      // 雙膝
-      const lKnee = calculateAngle(lm[23], lm[25], lm[27]);
-      const rKnee = calculateAngle(lm[24], lm[26], lm[28]);
-      document.getElementById('lknee-val').innerText = Math.round(lKnee) + "°";
-      document.getElementById('rknee-val').innerText = Math.round(rKnee) + "°";
-
-      // --- 繪製骨架 ---
-      drawConnectors(canvasCtx, lm, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
-      drawLandmarks(canvasCtx, lm, {color: '#00FF00', lineWidth: 1, radius: 3});
-
+      
+      if (results.poseLandmarks) {
+        const lm = results.poseLandmarks;
+        // 計算數據 (示例：後手肘)
+        const elbow = getAngle(lm[12], lm[14], lm[16]);
+        document.getElementById('elbow-val').innerText = Math.round(elbow) + "°";
+        
+        drawConnectors(canvasCtx, lm, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
+        drawLandmarks(canvasCtx, lm, {color: '#00FF00', lineWidth: 1, radius: 3});
+      }
       canvasCtx.restore();
+    });
+
+    // 3. 相機控制
+    function startCamera() {
+      if (camera) camera.stop();
+      camera = new Camera(videoElement, {
+        onFrame: async () => { await pose.send({image: videoElement}); },
+        facingMode: currentFacingMode,
+        width: 640, height: 480
+      });
+      camera.start();
     }
 
-    // 3. 初始化 MediaPipe
-    const pose = new Pose({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-    });
+    function switchCamera() {
+      currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
+      startCamera();
+    }
 
-    pose.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-    pose.onResults(onResults);
+    // 4. 影片上傳邏輯
+    function loadVideo(event) {
+      if (camera) camera.stop(); // 停止即時相機
+      const file = event.target.files[0];
+      videoElement.src = URL.createObjectURL(file);
+      videoElement.muted = true;
+      videoElement.loop = true;
+      videoElement.play();
+      
+      // 針對影片檔案逐幀分析
+      async function processVideo() {
+        if (!videoElement.paused && !videoElement.ended) {
+          await pose.send({image: videoElement});
+          requestAnimationFrame(processVideo);
+        }
+      }
+      videoElement.onplay = () => processVideo();
+    }
 
-    // 4. 啟動相機
-    const camera = new Camera(videoElement, {
-      onFrame: async () => { await pose.send({image: videoElement}); },
-      width: 640,
-      height: 480
-    });
-    camera.start();
+    startCamera(); // 初始化
   </script>
 </body>
 </html>
