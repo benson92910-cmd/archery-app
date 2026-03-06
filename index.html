@@ -100,3 +100,55 @@
   </script>
 </body>
 </html>
+function onResults(results) {
+  if (!results.poseLandmarks) return;
+
+  canvasCtx.save();
+  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+  canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+  const lm = results.poseLandmarks;
+
+  // --- 1. 定義計算函式 ---
+  function drawAngle(p1, p2, p3, label) {
+    const angle = calculateAngle(p1, p2, p3);
+    canvasCtx.fillStyle = "#00FF00";
+    canvasCtx.font = "18px Arial";
+    // 將座標轉換為畫布像素位置
+    canvasCtx.fillText(`${label}: ${Math.round(angle)}°`, p2.x * canvasElement.width, p2.y * canvasElement.height - 10);
+    return angle;
+  }
+
+  // --- 2. 執行各部位分析 ---
+  
+  // A. 手臂分析 (前手與後手)
+  // 左手：11(肩), 13(肘), 15(腕) | 右手：12(肩), 14(肘), 16(腕)
+  drawAngle(lm[11], lm[13], lm[15], "左手肘");
+  drawAngle(lm[12], lm[14], lm[16], "右手肘");
+
+  // B. 軀幹分析 (肩膀中點與髖部中點的垂直夾角)
+  // 肩膀中點(11,12), 髖部中點(23,24)
+  const shoulderMid = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2 };
+  const hipMid = { x: (lm[23].x + lm[24].x) / 2, y: (lm[23].y + lm[24].y) / 2 };
+  const verticalPoint = { x: hipMid.x, y: 0 }; // 建立一個垂直參考點
+  const bodyAngle = calculateAngle(shoulderMid, hipMid, verticalPoint);
+  canvasCtx.fillText(`軀幹垂直度: ${Math.round(bodyAngle)}°`, hipMid.x * canvasElement.width, hipMid.y * canvasElement.height + 20);
+
+  // C. 雙腳分析 (髖部到腳踝的站立角度)
+  drawAngle(lm[23], lm[25], lm[27], "左膝角");
+  drawAngle(lm[24], lm[26], lm[28], "右膝角");
+
+  // --- 3. 繪製骨架連接線 ---
+  drawConnectors(canvasCtx, lm, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
+  drawLandmarks(canvasCtx, lm, {color: '#FF0000', lineWidth: 1, radius: 3});
+
+  canvasCtx.restore();
+}
+
+// 基礎數學：計算三點間夾角
+function calculateAngle(a, b, c) {
+  const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+  let angle = Math.abs(radians * 180.0 / Math.PI);
+  if (angle > 180.0) angle = 360 - angle;
+  return angle;
+}
