@@ -3,16 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 雙影片比對版</title>
+  <title>射箭 Pro AI - 全能旗艦版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
     body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-    .header-controls { padding: 15px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; width: 100%; border-bottom: 1px solid #333; }
-    .btn { background: #222; color: #00FF00; padding: 10px 15px; border-radius: 8px; border: 1px solid #00FF00; cursor: pointer; font-size: 13px; font-weight: bold; }
+    .header-controls { padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: 100%; background: #1a1a1a; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 100; }
+    .btn { background: #222; color: #00FF00; padding: 8px 12px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 12px; font-weight: bold; }
+    .btn-danger { border-color: #ff4444; color: #ff4444; }
     
-    .comparison-container { display: flex; gap: 10px; width: 98%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; }
-    .video-slot { flex: 1; min-width: 320px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
+    .comparison-container { display: flex; gap: 10px; width: 95%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; justify-content: center; }
+    .video-slot { flex: 1; min-width: 300px; max-width: 500px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
     
     .canvas-box { position: relative; width: 100%; aspect-ratio: 9/16; background: #000; border-radius: 8px; overflow: hidden; }
     canvas { width: 100%; height: 100%; object-fit: contain; }
@@ -29,20 +31,25 @@
     .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
     .bar-fill { width: 0%; height: 100%; background: #00FF00; }
 
-    #sync-btn { background: #00FF00; color: #000; width: 92%; max-width: 600px; margin: 15px 0; padding: 12px; font-size: 16px; border: none; border-radius: 30px; }
+    #sync-controls { width: 100%; display: flex; justify-content: center; padding: 10px; gap: 10px; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
 
   <div class="header-controls">
+    <button class="btn" onclick="activateLiveMode()">📸 開啟即時鏡頭</button>
+    <button class="btn" onclick="toggleCamera()">🔄 切換前後鏡頭</button>
     <label class="btn" for="upload-A">📁 上傳影片 A</label>
     <input type="file" id="upload-A" accept="video/*" hidden onchange="handleFile(event, 'A')">
     <label class="btn" for="upload-B">📁 上傳影片 B</label>
     <input type="file" id="upload-B" accept="video/*" hidden onchange="handleFile(event, 'B')">
-    <button class="btn" onclick="location.reload()" style="border-color:#ff4444; color:#ff4444">🔄 重設所有</button>
+    <button class="btn btn-danger" onclick="location.reload()">🔄 重設</button>
   </div>
 
-  <button id="sync-btn" onclick="togglePlaySync()">▶ 同步播放 / 暫停</button>
+  <div id="sync-controls" class="hidden">
+    <button class="btn" id="sync-btn" style="background:#00FF00; color:#000; padding: 10px 30px;" onclick="togglePlaySync()">▶ 同步播放 / 暫停</button>
+  </div>
 
   <div class="comparison-container">
     <div class="video-slot" id="slot-A">
@@ -51,14 +58,14 @@
         <video id="video-A" playsinline muted></video>
         <canvas id="canvas-A"></canvas>
       </div>
-      <input type="range" class="custom-progress" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')">
+      <input type="range" class="custom-progress hidden" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')">
       <div class="slot-dash">
         <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-A" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-A" class="mini-val">--°</div></div>
       </div>
     </div>
 
-    <div class="video-slot" id="slot-B">
+    <div class="video-slot hidden" id="slot-B">
       <div class="canvas-box">
         <div class="overlay" id="overlay-B"><div style="color:#00FF00">分析 B 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
         <video id="video-B" playsinline muted></video>
@@ -81,7 +88,10 @@
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
+    let camera = null;
     let activeAnalyzingSlot = null;
+    let currentFacingMode = "environment";
+    let isLiveMode = false;
 
     pose.onResults((results) => {
       if (activeAnalyzingSlot) {
@@ -90,9 +100,48 @@
       }
     });
 
+    // --- 鏡頭邏輯 ---
+    async function activateLiveMode() {
+      isLiveMode = true;
+      document.getElementById('slot-B').classList.add('hidden');
+      document.getElementById('progress-A').classList.add('hidden');
+      document.getElementById('sync-controls').classList.add('hidden');
+      
+      if (camera) await camera.stop();
+      slots.A.vid.src = "";
+      slots.A.vid.srcObject = null;
+
+      camera = new Camera(slots.A.vid, {
+        onFrame: async () => {
+          if (isLiveMode) {
+            activeAnalyzingSlot = 'A';
+            await pose.send({ image: slots.A.vid });
+          }
+        },
+        facingMode: currentFacingMode,
+        width: 640, height: 480
+      });
+      camera.start();
+    }
+
+    async function toggleCamera() {
+      currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+      if (isLiveMode) activateLiveMode();
+    }
+
+    // --- 影片分析邏輯 ---
     async function handleFile(event, id) {
+      isLiveMode = false;
+      if (camera) { await camera.stop(); camera = null; }
+      
       const file = event.target.files[0];
       if (!file) return;
+
+      if (id === 'B') {
+        document.getElementById('slot-B').classList.remove('hidden');
+        document.getElementById('sync-controls').classList.remove('hidden');
+      }
+      document.getElementById(`progress-${id}`).classList.remove('hidden');
 
       activeAnalyzingSlot = id;
       const slot = slots[id];
@@ -102,7 +151,7 @@
 
       await new Promise(r => slot.vid.onloadeddata = r);
       const duration = slot.vid.duration;
-      const step = 0.1; // 10 FPS 分析以保持兩片同時運行的效能
+      const step = 0.1; // 10 FPS 分析以平衡效能
 
       for (let t = 0; t <= duration; t += step) {
         slot.vid.currentTime = t;
@@ -116,6 +165,7 @@
       activeAnalyzingSlot = null;
     }
 
+    // --- 工具與渲染 ---
     function updateUI(id, lm) {
       if (!lm) return;
       const getAng = (p1, p2, p3) => {
@@ -132,14 +182,13 @@
 
     function togglePlaySync() {
       const vA = slots.A.vid, vB = slots.B.vid;
-      if (vA.paused) { vA.play(); vB.play(); } 
+      if (vA.paused) { vA.play(); if(vB.src) vB.play(); } 
       else { vA.pause(); vB.pause(); }
     }
 
     function manualSeek(id) {
       const slot = slots[id];
-      const time = (slot.prog.value / 100) * slot.vid.duration;
-      slot.vid.currentTime = time;
+      slot.vid.currentTime = (slot.prog.value / 100) * slot.vid.duration;
     }
 
     function draw() {
@@ -150,13 +199,11 @@
           slot.cvs.height = slot.vid.videoHeight;
           slot.ctx.drawImage(slot.vid, 0, 0);
           
-          // 更新進度條位置
-          if (!slot.vid.paused) {
+          if (!slot.vid.paused && slot.vid.duration) {
             slot.prog.value = (slot.vid.currentTime / slot.vid.duration) * 100;
           }
 
-          // 播放時持續請求 AI (分時處理避免卡頓)
-          if (!activeAnalyzingSlot && !slot.vid.paused) {
+          if (!activeAnalyzingSlot && !slot.vid.paused && !isLiveMode) {
             activeAnalyzingSlot = id;
             pose.send({ image: slot.vid }).then(() => { activeAnalyzingSlot = null; });
           }
@@ -170,7 +217,10 @@
       requestAnimationFrame(draw);
     }
 
-    window.onload = draw;
+    window.onload = () => {
+      draw();
+      activateLiveMode(); // 預設開啟即時鏡頭
+    };
   </script>
 </body>
 </html>
