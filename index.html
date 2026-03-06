@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 旗艦穩定分析版</title>
+  <title>射箭 Pro AI - 終極修復版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -23,7 +23,7 @@
     .mini-card { background: #000; padding: 5px; border-radius: 5px; text-align: center; border: 1px solid #444; }
     .mini-label { font-size: 10px; color: #888; }
     .mini-val { font-size: 14px; color: #00FF00; font-weight: bold; }
-    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
     .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
     .bar-fill { width: 0%; height: 100%; background: #00FF00; }
     #sync-controls { width: 100%; display: flex; justify-content: center; padding: 10px; }
@@ -49,7 +49,7 @@
   <div class="comparison-container">
     <div class="video-slot" id="slot-A">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">深度分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
         <video id="video-A" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-A"></canvas>
       </div>
@@ -58,7 +58,7 @@
         <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-A" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-A" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-A" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">軀幹垂直</div><div id="torso-A" class="mini-val">--°</div></div>
         <div class="mini-card" style="grid-column: span 2; border-color: #00FF00;"><div class="mini-label">穩定度 (Δ)</div><div id="drift-A" class="mini-val">--°</div></div>
         <button class="btn btn-snap" onclick="resetBaseline('A')">🎯 鎖定基準</button>
       </div>
@@ -66,7 +66,7 @@
 
     <div class="video-slot hidden" id="slot-B">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
+        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">深度分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
         <video id="video-B" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-B"></canvas>
       </div>
@@ -75,7 +75,7 @@
         <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-B" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-B" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-B" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">軀幹垂直</div><div id="torso-B" class="mini-val">--°</div></div>
         <div class="mini-card" style="grid-column: span 2; border-color: #00FF00;"><div class="mini-label">穩定度 (Δ)</div><div id="drift-B" class="mini-val">--°</div></div>
         <button class="btn btn-snap" onclick="resetBaseline('B')">🎯 鎖定基準</button>
       </div>
@@ -102,6 +102,7 @@
     });
 
     function getAng(p1, p2, p3) {
+      if(!p1 || !p2 || !p3) return 0;
       const r = Math.atan2(p3.y-p2.y, p3.x-p2.x) - Math.atan2(p1.y-p2.y, p1.x-p2.x);
       let a = Math.abs(r * 180 / Math.PI);
       return Math.round(a > 180 ? 360 - a : a);
@@ -113,20 +114,20 @@
       const dS = isR?12:11, dE = isR?14:13, dW = isR?16:15;
       const pS = isR?11:12, pE = isR?13:14, pH = isR?23:24;
 
-      const m = {
+      const metrics = {
         elb: getAng(lm[dS], lm[dE], lm[dW]),
         fSh: getAng(lm[pE], lm[pS], lm[pH]),
         bSh: getAng(lm[dE], lm[dS], lm[isR?24:23]),
         tor: getAng({x:(lm[11].x+lm[12].x)/2, y:0}, {x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2}, {x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2})
       };
 
-      document.getElementById(`elbow-${id}`).innerText = m.elb + "°";
-      document.getElementById(`f-shoulder-${id}`).innerText = m.fSh + "°";
-      document.getElementById(`b-shoulder-${id}`).innerText = m.bSh + "°";
-      document.getElementById(`torso-${id}`).innerText = m.tor + "°";
+      document.getElementById(`elbow-${id}`).innerText = metrics.elb + "°";
+      document.getElementById(`f-shoulder-${id}`).innerText = metrics.fSh + "°";
+      document.getElementById(`b-shoulder-${id}`).innerText = metrics.bSh + "°";
+      document.getElementById(`torso-${id}`).innerText = metrics.tor + "°";
 
       if (slots[id].baseline) {
-        const drift = Math.abs(m.elb - slots[id].baseline.elb) + Math.abs(m.fSh - slots[id].baseline.fSh);
+        const drift = Math.abs(metrics.elb - slots[id].baseline.elb) + Math.abs(metrics.fSh - slots[id].baseline.fSh);
         const el = document.getElementById(`drift-${id}`);
         el.innerText = drift + "°";
         el.style.color = drift > 7 ? "#ff4444" : "#00FF00";
@@ -134,8 +135,13 @@
     }
 
     async function handleFile(e, id) {
-      // 如果鏡頭開著，先強制關閉以釋放資源
-      if (isLive) { isLive = false; if(camera) await camera.stop(); camera = null; }
+      // 關鍵修復：完全清除鏡頭佔用
+      if (isLive) { 
+        isLive = false; 
+        if(camera) { await camera.stop(); camera = null; }
+        slots.A.vid.srcObject = null;
+        slots.A.vid.load();
+      }
       
       const file = e.target.files[0];
       if (!file) return;
@@ -145,26 +151,45 @@
         document.getElementById('slot-B').classList.remove('hidden');
         document.getElementById('sync-controls').classList.remove('hidden');
       }
+      
       s.ovl.style.display = 'flex';
       s.prog.classList.remove('hidden');
-      s.vid.src = URL.createObjectURL(file);
-      await s.vid.load();
+      
+      // 建立 Blob URL 並強制加載
+      const url = URL.createObjectURL(file);
+      s.vid.src = url;
+      s.vid.load();
+
+      // 等待元數據與解碼預熱
+      await new Promise(r => {
+          s.vid.onloadedmetadata = () => {
+              s.vid.currentTime = 0.1; // 稍微偏移避開第0幀可能黑屏
+              r();
+          };
+      });
 
       const dur = s.vid.duration;
-      for (let t = 0; t <= dur; t += 0.4) {
+      // 深度分析循環
+      for (let t = 0; t <= dur; t += 0.5) {
         s.vid.currentTime = t;
         await new Promise(r => s.vid.onseeked = r);
         currentId = id; aiBusy = true;
         await pose.send({ image: s.vid });
-        s.fill.style.width = Math.round((t/dur)*100) + "%";
-        document.getElementById(`msg-${id}`).innerText = `分析中 ${Math.round((t/dur)*100)}%`;
+        const p = Math.round((t/dur)*100);
+        s.fill.style.width = p + "%";
+        document.getElementById(`msg-${id}`).innerText = `分析中 ${p}%`;
       }
+      
       s.ovl.style.display = 'none';
       s.vid.currentTime = 0;
-      s.vid.play(); // 分析完自動播放
+      s.vid.play();
     }
 
     async function activateLiveMode() {
+      // 清除舊有的影片來源
+      slots.A.vid.src = "";
+      slots.A.vid.load();
+      
       isLive = true;
       if (camera) await camera.stop();
       camera = new Camera(slots.A.vid, {
@@ -187,14 +212,14 @@
     }
 
     function resetBaseline(id) {
-        const lm = slots[id].lastRes?.poseLandmarks;
-        if (lm) {
-            const isR = lm[14].y < lm[13].y;
+        const res = slots[id].lastRes?.poseLandmarks;
+        if (res) {
+            const isR = res[14].y < res[13].y;
             slots[id].baseline = {
-                elb: getAng(lm[isR?12:11], lm[isR?14:13], lm[isR?16:15]),
-                fSh: getAng(lm[isR?13:14], lm[isR?11:12], lm[isR?23:24])
+                elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]),
+                fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24])
             };
-            alert("基準已鎖定");
+            alert("開弓點已鎖定，開始監測移動量");
         }
     }
 
@@ -207,11 +232,16 @@
       ['A', 'B'].forEach(id => {
         const s = slots[id];
         if (s.vid.readyState >= 2) {
-          s.cvs.width = s.vid.videoWidth; s.cvs.height = s.vid.videoHeight;
+          s.cvs.width = s.vid.videoWidth; 
+          s.cvs.height = s.vid.videoHeight;
           s.ctx.drawImage(s.vid, 0, 0);
+          
           if (!s.vid.paused && s.vid.duration) {
             s.prog.value = (s.vid.currentTime / s.vid.duration) * 100;
-            if (!aiBusy && Math.floor(s.vid.currentTime*10)%4===0) { aiBusy=true; currentId=id; pose.send({image:s.vid}); }
+            // 播放中實時監測（降低頻率減輕壓力）
+            if (!aiBusy && Math.floor(s.vid.currentTime*10)%5===0) { 
+                aiBusy=true; currentId=id; pose.send({image:s.vid}); 
+            }
           }
           if (s.lastRes?.poseLandmarks) {
             drawConnectors(s.ctx, s.lastRes.poseLandmarks, POSE_CONNECTIONS, {color:'#00FF00', lineWidth:2});
