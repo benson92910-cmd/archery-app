@@ -1,1 +1,102 @@
-# archery-app
+# archery-app<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>射箭動作分析 Pro - 程式夥伴</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+  <style>
+    body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
+    .controls { padding: 15px; background: #333; width: 100%; display: flex; justify-content: center; gap: 10px; }
+    canvas { width: 95%; max-width: 800px; border: 2px solid #555; border-radius: 8px; margin-top: 10px; }
+    video { display: none; }
+    button, input[type="file"] { padding: 10px; border-radius: 5px; border: none; cursor: pointer; }
+    #upload-btn { background: #007bff; color: white; }
+    .angle-display { font-size: 24px; color: #00ff00; margin: 10px; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <div class="controls">
+    <input type="file" id="file-upload" accept="video/*">
+    <button id="camera-btn" style="background: #28a745; color: white;">切換相機</button>
+  </div>
+
+  <div class="angle-display" id="angle-text">手肘角度: --°</div>
+  
+  <video id="input_video" playsinline></video>
+  <canvas id="output_canvas"></canvas>
+
+  <script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const angleText = document.getElementById('angle-text');
+    const fileUpload = document.getElementById('file-upload');
+
+    // 計算角度的函數
+    function calculateAngle(a, b, c) {
+      const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+      let angle = Math.abs((radians * 180.0) / Math.PI);
+      if (angle > 180.0) angle = 360 - angle;
+      return angle.toFixed(1);
+    }
+
+    function onResults(results) {
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.poseLandmarks) {
+        // 抓取肩膀(11)、手肘(13)、手腕(15)
+        const shoulder = results.poseLandmarks[11];
+        const elbow = results.poseLandmarks[13];
+        const wrist = results.poseLandmarks[15];
+
+        const angle = calculateAngle(shoulder, elbow, wrist);
+        angleText.innerText = `手肘角度: ${angle}°`;
+
+        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
+        drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 2, radius: 4});
+      }
+      canvasCtx.restore();
+      
+      // 如果是影片檔案，持續要求下一幀
+      if (!videoElement.paused && !videoElement.ended) {
+        requestAnimationFrame(() => pose.send({image: videoElement}));
+      }
+    }
+
+    const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
+    pose.onResults(onResults);
+
+    // 處理影片上傳
+    fileUpload.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      const url = URL.createObjectURL(file);
+      videoElement.src = url;
+      videoElement.play();
+      videoElement.onplay = () => pose.send({image: videoElement});
+    });
+
+    // 啟動相機 (簡易版)
+    document.getElementById('camera-btn').addEventListener('click', () => {
+      navigator.mediaDevices.getUserMedia({video: true}).then(stream => {
+        videoElement.srcObject = stream;
+        videoElement.play();
+        videoElement.onplay = () => {
+          const process = async () => {
+            if(!videoElement.srcObject) return;
+            await pose.send({image: videoElement});
+            requestAnimationFrame(process);
+          };
+          process();
+        };
+      });
+    });
+  </script>
+</body>
+</html>
