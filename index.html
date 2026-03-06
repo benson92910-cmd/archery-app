@@ -11,6 +11,7 @@
     body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
     .header-controls { padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: 100%; background: #1a1a1a; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 100; }
     .btn { background: #222; color: #00FF00; padding: 8px 12px; border-radius: 6px; border: 1px solid #00FF00; cursor: pointer; font-size: 12px; font-weight: bold; }
+    .btn-sync { border-color: #0088ff; color: #0088ff; }
     .btn-danger { border-color: #ff4444; color: #ff4444; }
     .btn-snap { background: #00FF00; color: #000; grid-column: span 2; margin-top: 5px; border: none; font-weight: bold; height: 35px; }
     
@@ -21,7 +22,6 @@
     canvas { width: 100%; height: 100%; object-fit: contain; position: relative; z-index: 5; }
     video { display: none; }
 
-    /* 進度條強制顯示優化 */
     .custom-progress { width: 100%; height: 25px; margin: 10px 0; accent-color: #00FF00; display: block !important; cursor: pointer; }
     
     .slot-dash { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 5px; }
@@ -45,6 +45,9 @@
     <input type="file" id="upload-A" accept="video/*" hidden onchange="handleFile(event, 'A')">
     <label class="btn" for="upload-B">📁 影片 B</label>
     <input type="file" id="upload-B" accept="video/*" hidden onchange="handleFile(event, 'B')">
+    
+    <button class="btn btn-sync" onclick="syncPlay()">▶️ 同步重播 A/B</button>
+    
     <button class="btn btn-danger" onclick="location.reload()">🔄 重設</button>
   </div>
 
@@ -97,7 +100,6 @@
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
     let camera = null, isLive = false, aiBusy = false, currentId = null, facing = "environment";
-    // 放箭偵測閾值：調高以減少開弓誤判
     const RELEASE_THRESHOLD = 25; 
 
     pose.onResults((res) => {
@@ -131,7 +133,6 @@
       document.getElementById(`b-shoulder-${id}`).innerText = bSh + "°";
       document.getElementById(`torso-${id}`).innerText = torso + "°";
 
-      // 重要：只有在鎖定基準（開弓定位）後才啟用放箭偵測
       if (slots[id].baseline && slots[id].lastElbow !== 0 && !slots[id].isLock) {
           const delta = Math.abs(elbow - slots[id].lastElbow);
           if (delta > RELEASE_THRESHOLD) {
@@ -209,6 +210,17 @@
     async function manualSeek(id) {
         slots[id].vid.currentTime = (slots[id].prog.value / 100) * slots[id].vid.duration;
         currentId = id; aiBusy = true; await pose.send({ image: slots[id].vid });
+    }
+
+    function syncPlay() {
+        if (isLive) { isLive = false; if(camera) camera.stop(); }
+        ['A', 'B'].forEach(id => {
+            const v = slots[id].vid;
+            if (v.src && v.readyState >= 2) {
+                v.currentTime = 0;
+                v.play();
+            }
+        });
     }
 
     function draw() {
