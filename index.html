@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 穩定流暢版</title>
+  <title>射箭 Pro AI - 完整數值修復版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -96,11 +96,10 @@
     const vLive = document.getElementById('video-live');
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     
-    // 將模型複雜度降低為 0 (Lite 版) 以確保雙影片同時運行的流暢度
     pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
     let camera = null, isLive = false, aiBusy = false, facing = "environment";
-    let nextCheckId = 'A'; // 用於輪替
+    let nextCheckId = 'A';
     let requestQueue = [];
     const RELEASE_THRESHOLD = 25; 
 
@@ -110,10 +109,10 @@
         slots[id].lastRes = res;
         processArcheryLogic(id, res.poseLandmarks);
       }
-      // 加入極短延遲，讓 GPU 有時間處理繪製
       setTimeout(() => { aiBusy = false; }, 5);
     });
 
+    // 角度計算函數
     function getAng(p1, p2, p3) {
       if(!p1 || !p2 || !p3) return 0;
       const r = Math.atan2(p3.y-p2.y, p3.x-p2.x) - Math.atan2(p1.y-p2.y, p1.x-p2.x);
@@ -123,21 +122,49 @@
 
     function processArcheryLogic(id, lm) {
       if (!lm) return;
+      // 偵測慣用手 (以手肘 y 座標判斷，y 較小者為後手/拉弦手)
       const isR = lm[14].y < lm[13].y;
-      const elbow = getAng(lm[isR?12:11], lm[isR?14:13], lm[isR?16:15]);
-      const fSh = getAng(lm[isR?13:14], lm[isR?11:12], lm[isR?23:24]);
       
-      document.getElementById(`elbow-${id}`).innerText = elbow + "°";
-      document.getElementById(`f-shoulder-${id}`).innerText = fSh + "°";
-      // 其他數值同理計算...
+      // 定義關鍵點索引
+      const backElbow = isR ? lm[14] : lm[13];
+      const backShoulder = isR ? lm[12] : lm[11];
+      const backWrist = isR ? lm[16] : lm[15];
+      const frontShoulder = isR ? lm[11] : lm[12];
+      const frontElbow = isR ? lm[13] : lm[14];
+      const backHip = isR ? lm[24] : lm[23];
 
+      // 1. 後手肘角度 (腕-肘-肩)
+      const elbowAng = getAng(backWrist, backElbow, backShoulder);
+      
+      // 2. 前肩角度 (前肘-前肩-前髖)
+      const fShoulderAng = getAng(frontElbow, frontShoulder, isR ? lm[23] : lm[24]);
+
+      // 3. 後肩角度 (後手肘-後肩-後髖)
+      const bShoulderAng = getAng(backElbow, backShoulder, backHip);
+
+      // 4. 軀幹角度 (肩膀中心到髖部中心 與 垂直線的夾角)
+      const shoulderMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
+      const hipMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
+      const verticalTop = { x: hipMid.x, y: hipMid.y - 0.5 }; // 建立一條垂直向上的參考線
+      const torsoAng = getAng(shoulderMid, hipMid, verticalTop);
+
+      // 顯示數值
+      document.getElementById(`elbow-${id}`).innerText = elbowAng + "°";
+      document.getElementById(`f-shoulder-${id}`).innerText = fShoulderAng + "°";
+      document.getElementById(`b-shoulder-${id}`).innerText = bShoulderAng + "°";
+      document.getElementById(`torso-${id}`).innerText = torsoAng + "°";
+
+      // 放箭偵測
       if (slots[id].baseline && slots[id].lastElbow !== 0 && !slots[id].isLock) {
-          if (Math.abs(elbow - slots[id].lastElbow) > RELEASE_THRESHOLD) triggerRelease(id, elbow, fSh);
+          if (Math.abs(elbowAng - slots[id].lastElbow) > RELEASE_THRESHOLD) {
+              triggerRelease(id, elbowAng, fShoulderAng);
+          }
       }
-      slots[id].lastElbow = elbow;
+      slots[id].lastElbow = elbowAng;
 
+      // 穩定度計算
       if (slots[id].baseline) {
-        const drift = Math.abs(elbow - slots[id].baseline.elb) + Math.abs(fSh - slots[id].baseline.fSh);
+        const drift = Math.abs(elbowAng - slots[id].baseline.elb) + Math.abs(fShoulderAng - slots[id].baseline.fSh);
         const driftEl = document.getElementById(`drift-${id}`);
         driftEl.innerText = drift + "°";
         driftEl.style.color = drift > 5 ? "#ff4444" : "#00FF00";
@@ -197,8 +224,18 @@
         const res = slots[id].lastRes?.poseLandmarks;
         if (res) {
             const isR = res[14].y < res[13].y;
-            slots[id].baseline = { elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]), fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24]) };
-            alert("🎯 基準鎖定");
+            const backWrist = isR ? res[16] : res[15];
+            const backElbow = isR ? res[14] : res[13];
+            const backShoulder = isR ? res[12] : res[11];
+            const frontShoulder = isR ? res[11] : res[12];
+            const frontElbow = isR ? res[13] : res[14];
+            const frontHip = isR ? res[23] : res[24];
+
+            slots[id].baseline = { 
+                elb: getAng(backWrist, backElbow, backShoulder), 
+                fSh: getAng(frontElbow, frontShoulder, frontHip) 
+            };
+            alert("🎯 基準已鎖定 (開始偵測飄移與放箭)");
         }
     }
 
@@ -231,7 +268,6 @@
         }
       });
 
-      // 嚴格控制輪替與節流
       if (!aiBusy) {
         let targetId = null;
         const activeA = isLive || (slots.A.vid.src && !slots.A.vid.paused);
@@ -259,4 +295,3 @@
   </script>
 </body>
 </html>
-
