@@ -3,220 +3,174 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 高幀率整合版</title>
+  <title>射箭 Pro AI - 雙影片比對版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
-    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; overflow-x: hidden; }
-    .controls { display: flex; gap: 8px; padding: 15px 5px; width: 100%; justify-content: center; flex-wrap: wrap; }
-    .btn { background: #222; color: #00FF00; padding: 10px 12px; border-radius: 8px; border: 1px solid #00FF00; cursor: pointer; font-size: 13px; font-weight: bold; text-decoration: none; border-style: solid; }
-    #upload-input { display: none; }
+    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
+    .header-controls { padding: 15px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; width: 100%; border-bottom: 1px solid #333; }
+    .btn { background: #222; color: #00FF00; padding: 10px 15px; border-radius: 8px; border: 1px solid #00FF00; cursor: pointer; font-size: 13px; font-weight: bold; }
     
-    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 92%; margin-bottom: 15px; }
-    .data-card { background: #1a1a1a; padding: 15px; border-radius: 12px; text-align: center; border: 1px solid #00FF00; box-shadow: 0 0 10px rgba(0, 255, 0, 0.2); }
-    .data-label { font-size: 12px; color: #888; margin-bottom: 4px; }
-    .data-value { font-size: 22px; font-weight: bold; color: #fff; }
-
-    .canvas-container { position: relative; width: 92%; max-width: 640px; border-radius: 15px; overflow: hidden; border: 1px solid #333; background: #000; aspect-ratio: 9/16; }
+    .comparison-container { display: flex; gap: 10px; width: 98%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; }
+    .video-slot { flex: 1; min-width: 320px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
+    
+    .canvas-box { position: relative; width: 100%; aspect-ratio: 9/16; background: #000; border-radius: 8px; overflow: hidden; }
     canvas { width: 100%; height: 100%; object-fit: contain; }
     video { display: none; }
 
-    #analysis-overlay {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(0,0,0,0.9); display: none; flex-direction: column;
-      justify-content: center; align-items: center; z-index: 100;
-    }
-    .progress-track { width: 70%; height: 8px; background: #333; border-radius: 4px; margin-top: 15px; overflow: hidden; border: 1px solid #444; }
-    #progress-fill { width: 0%; height: 100%; background: #00FF00; box-shadow: 0 0 15px #00FF00; transition: width 0.05s; }
+    .custom-progress { width: 100%; margin: 10px 0; cursor: pointer; accent-color: #00FF00; }
+    
+    .slot-dash { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 8px; }
+    .mini-card { background: #000; padding: 5px; border-radius: 5px; text-align: center; border: 1px solid #444; }
+    .mini-label { font-size: 10px; color: #888; }
+    .mini-val { font-size: 16px; color: #00FF00; font-weight: bold; }
+
+    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; border-radius: 8px; }
+    .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
+    .bar-fill { width: 0%; height: 100%; background: #00FF00; }
+
+    #sync-btn { background: #00FF00; color: #000; width: 92%; max-width: 600px; margin: 15px 0; padding: 12px; font-size: 16px; border: none; border-radius: 30px; }
   </style>
 </head>
 <body>
 
-  <div class="controls">
-    <button class="btn" onclick="toggleCamera()">🔄 切換鏡頭</button>
-    <label class="btn" for="upload-input">📁 上傳影片 (高FPS分析)</label>
-    <input type="file" id="upload-input" accept="video/*" onchange="handleFileUpload(event)">
-    <button class="btn" onclick="resetToLive()"><span style="color:#ff4444">●</span> 即時模式</button>
-  </div>
-  
-  <div class="dashboard">
-    <div class="data-card"><div class="data-label">後手肘角度</div><div id="elbow-val" class="data-value">--°</div></div>
-    <div class="data-card"><div class="data-label">軀幹垂直度</div><div id="torso-val" class="data-value">--°</div></div>
-    <div class="data-card"><div class="data-label">左膝角度</div><div id="lknee-val" class="data-value">--°</div></div>
-    <div class="data-card"><div class="data-label">右膝角度</div><div id="rknee-val" class="data-value">--°</div></div>
+  <div class="header-controls">
+    <label class="btn" for="upload-A">📁 上傳影片 A</label>
+    <input type="file" id="upload-A" accept="video/*" hidden onchange="handleFile(event, 'A')">
+    <label class="btn" for="upload-B">📁 上傳影片 B</label>
+    <input type="file" id="upload-B" accept="video/*" hidden onchange="handleFile(event, 'B')">
+    <button class="btn" onclick="location.reload()" style="border-color:#ff4444; color:#ff4444">🔄 重設所有</button>
   </div>
 
-  <div class="canvas-container">
-    <div id="analysis-overlay">
-      <div style="color:#00FF00; font-weight:bold; font-size: 18px;">🔍 AI 高頻採樣分析中...</div>
-      <div class="progress-track"><div id="progress-fill"></div></div>
-      <div id="percent-text" style="margin-top:10px; color:#00FF00; font-family: monospace; font-size: 20px;">0%</div>
-      <div style="margin-top:5px; color:#666; font-size: 11px;">正在以 30 FPS 提取動作細節</div>
+  <button id="sync-btn" onclick="togglePlaySync()">▶ 同步播放 / 暫停</button>
+
+  <div class="comparison-container">
+    <div class="video-slot" id="slot-A">
+      <div class="canvas-box">
+        <div class="overlay" id="overlay-A"><div style="color:#00FF00">分析 A 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <video id="video-A" playsinline muted></video>
+        <canvas id="canvas-A"></canvas>
+      </div>
+      <input type="range" class="custom-progress" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')">
+      <div class="slot-dash">
+        <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-A" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-A" class="mini-val">--°</div></div>
+      </div>
     </div>
-    <video id="input_video" playsinline muted crossorigin="anonymous"></video>
-    <canvas id="output_canvas"></canvas>
+
+    <div class="video-slot" id="slot-B">
+      <div class="canvas-box">
+        <div class="overlay" id="overlay-B"><div style="color:#00FF00">分析 B 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
+        <video id="video-B" playsinline muted></video>
+        <canvas id="canvas-B"></canvas>
+      </div>
+      <input type="range" class="custom-progress" id="progress-B" min="0" max="100" value="0" oninput="manualSeek('B')">
+      <div class="slot-dash">
+        <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-B" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-B" class="mini-val">--°</div></div>
+      </div>
+    </div>
   </div>
 
   <script>
-    const videoElement = document.getElementById('input_video');
-    const canvasElement = document.getElementById('output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
-    const overlay = document.getElementById('analysis-overlay');
-    const progressFill = document.getElementById('progress-fill');
-    const percentText = document.getElementById('percent-text');
+    const slots = {
+      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null },
+      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null }
+    };
 
-    let camera = null;
-    let isAnalyzing = false;
-    let lastPoseResults = null;
-    let currentFacingMode = "environment"; 
+    const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
-    // --- 1. Pose 模型配置 ---
-    const pose = new Pose({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-    });
+    let activeAnalyzingSlot = null;
 
-    pose.setOptions({
-      modelComplexity: 1, 
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-    
     pose.onResults((results) => {
-      lastPoseResults = results;
-      if (results.poseLandmarks) {
-        updateMetrics(results.poseLandmarks);
+      if (activeAnalyzingSlot) {
+        slots[activeAnalyzingSlot].lastRes = results;
+        updateUI(activeAnalyzingSlot, results.poseLandmarks);
       }
     });
 
-    // --- 2. 核心運算 ---
-    function getAngle(p1, p2, p3) {
-      if(!p1 || !p2 || !p3) return 0;
-      const rad = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
-      let ang = Math.abs(rad * 180 / Math.PI);
-      return Math.round(ang > 180 ? 360 - ang : ang);
-    }
-
-    function updateMetrics(lm) {
-      const isRight = lm[14].y < lm[13].y;
-      document.getElementById('elbow-val').innerText = getAngle(lm[isRight?12:11], lm[isRight?14:13], lm[isRight?16:15]) + "°";
-      
-      const sMid = { x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2 };
-      const hMid = { x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2 };
-      document.getElementById('torso-val').innerText = getAngle({x:sMid.x, y:0}, sMid, hMid) + "°";
-      
-      document.getElementById('lknee-val').innerText = getAngle(lm[23], lm[25], lm[27]) + "°";
-      document.getElementById('rknee-val').innerText = getAngle(lm[24], lm[26], lm[28]) + "°";
-    }
-
-    // --- 3. 影片與鏡頭管理 ---
-    async function startApp() {
-      if (camera) await camera.stop();
-      camera = new Camera(videoElement, {
-        onFrame: async () => {
-          if (!isAnalyzing && videoElement.srcObject) {
-            await pose.send({ image: videoElement });
-          }
-        },
-        facingMode: currentFacingMode,
-        width: 640, height: 480
-      });
-      camera.start();
-    }
-
-    async function toggleCamera() {
-      currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-      videoElement.src = "";
-      videoElement.srcObject = null;
-      await startApp();
-    }
-
-    function resetToLive() {
-      location.reload();
-    }
-
-    // --- 4. 高幀率影片分析邏輯 ---
-    async function handleFileUpload(event) {
+    async function handleFile(event, id) {
       const file = event.target.files[0];
       if (!file) return;
 
-      if (camera) { await camera.stop(); camera = null; }
+      activeAnalyzingSlot = id;
+      const slot = slots[id];
+      slot.ovl.style.display = 'flex';
+      slot.vid.src = URL.createObjectURL(file);
+      slot.vid.load();
 
-      isAnalyzing = true;
-      overlay.style.display = 'flex';
-      
-      const url = URL.createObjectURL(file);
-      videoElement.srcObject = null;
-      videoElement.src = url;
-      videoElement.load();
-
-      await new Promise(r => videoElement.onloadeddata = r);
-      
-      const duration = videoElement.duration;
-      const targetFPS = 30; // 提高至 30 FPS
-      const step = 1 / targetFPS; 
+      await new Promise(r => slot.vid.onloadeddata = r);
+      const duration = slot.vid.duration;
+      const step = 0.1; // 10 FPS 分析以保持兩片同時運行的效能
 
       for (let t = 0; t <= duration; t += step) {
-        videoElement.currentTime = t;
-        
-        // 等待 Seek 完成
-        await new Promise(resolve => {
-          const onSeeked = () => {
-            videoElement.removeEventListener('seeked', onSeeked);
-            resolve();
-          };
-          videoElement.addEventListener('seeked', onSeeked);
-        });
+        slot.vid.currentTime = t;
+        await new Promise(res => { slot.vid.onseeked = res; });
+        await pose.send({ image: slot.vid });
+        slot.fill.style.width = (t / duration * 100) + "%";
+      }
 
-        // Await AI 運算結果
-        await pose.send({ image: videoElement });
-        
-        // 更新進度 (每隔幾幀更新一次文字以減少 DOM 負擔)
-        const progress = (t / duration) * 100;
-        progressFill.style.width = progress + "%";
-        if (Math.round(t / step) % 10 === 0) {
-          percentText.innerText = Math.round(progress) + "%";
+      slot.ovl.style.display = 'none';
+      slot.vid.currentTime = 0;
+      activeAnalyzingSlot = null;
+    }
+
+    function updateUI(id, lm) {
+      if (!lm) return;
+      const getAng = (p1, p2, p3) => {
+        const rad = Math.atan2(p3.y-p2.y, p3.x-p2.x) - Math.atan2(p1.y-p2.y, p1.x-p2.x);
+        let ang = Math.abs(rad * 180 / Math.PI);
+        return Math.round(ang > 180 ? 360 - ang : ang);
+      };
+      const isR = lm[14].y < lm[13].y;
+      document.getElementById(`elbow-${id}`).innerText = getAng(lm[isR?12:11], lm[isR?14:13], lm[isR?16:15]) + "°";
+      const sM = { x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2 };
+      const hM = { x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2 };
+      document.getElementById(`torso-${id}`).innerText = getAng({x:sM.x, y:0}, sM, hM) + "°";
+    }
+
+    function togglePlaySync() {
+      const vA = slots.A.vid, vB = slots.B.vid;
+      if (vA.paused) { vA.play(); vB.play(); } 
+      else { vA.pause(); vB.pause(); }
+    }
+
+    function manualSeek(id) {
+      const slot = slots[id];
+      const time = (slot.prog.value / 100) * slot.vid.duration;
+      slot.vid.currentTime = time;
+    }
+
+    function draw() {
+      ['A', 'B'].forEach(id => {
+        const slot = slots[id];
+        if (slot.vid.readyState >= 2) {
+          slot.cvs.width = slot.vid.videoWidth;
+          slot.cvs.height = slot.vid.videoHeight;
+          slot.ctx.drawImage(slot.vid, 0, 0);
+          
+          // 更新進度條位置
+          if (!slot.vid.paused) {
+            slot.prog.value = (slot.vid.currentTime / slot.vid.duration) * 100;
+          }
+
+          // 播放時持續請求 AI (分時處理避免卡頓)
+          if (!activeAnalyzingSlot && !slot.vid.paused) {
+            activeAnalyzingSlot = id;
+            pose.send({ image: slot.vid }).then(() => { activeAnalyzingSlot = null; });
+          }
+
+          if (slot.lastRes && slot.lastRes.poseLandmarks) {
+            drawConnectors(slot.ctx, slot.lastRes.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+            drawLandmarks(slot.ctx, slot.lastRes.poseLandmarks, {color: '#FFF', radius: 1});
+          }
         }
-      }
-
-      isAnalyzing = false;
-      overlay.style.display = 'none';
-      videoElement.currentTime = 0;
-      videoElement.play();
-      
-      playLoop();
+      });
+      requestAnimationFrame(draw);
     }
 
-    async function playLoop() {
-      if (!isAnalyzing && !videoElement.paused && !videoElement.ended && !videoElement.srcObject) {
-        await pose.send({ image: videoElement });
-      }
-      requestAnimationFrame(playLoop);
-    }
-
-    function mainLoop() {
-      if (videoElement.readyState >= 2) {
-        canvasElement.width = videoElement.videoWidth;
-        canvasElement.height = videoElement.videoHeight;
-        
-        canvasCtx.save();
-        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-        
-        if (lastPoseResults && lastPoseResults.poseLandmarks) {
-          drawConnectors(canvasCtx, lastPoseResults.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-          drawLandmarks(canvasCtx, lastPoseResults.poseLandmarks, {color: '#FFFFFF', radius: 1});
-        }
-        canvasCtx.restore();
-      }
-      requestAnimationFrame(mainLoop);
-    }
-
-    window.onload = () => {
-      startApp();
-      mainLoop();
-    };
+    window.onload = draw;
   </script>
 </body>
 </html>
