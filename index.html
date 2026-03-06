@@ -3,32 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 最終穩定修復版</title>
+  <title>射箭 Pro AI - 完整整合版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
-    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
+    body { margin: 0; background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; overflow-x: hidden; }
     .controls { display: flex; gap: 8px; padding: 15px 5px; width: 100%; justify-content: center; flex-wrap: wrap; }
-    .btn { background: #222; color: white; padding: 10px 12px; border-radius: 8px; border: 1px solid #00FF00; cursor: pointer; font-size: 13px; font-weight: bold; }
+    .btn { background: #222; color: #00FF00; padding: 10px 12px; border-radius: 8px; border: 1px solid #00FF00; cursor: pointer; font-size: 13px; font-weight: bold; text-decoration: none; border-style: solid; }
     #upload-input { display: none; }
     
     .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 92%; margin-bottom: 15px; }
-    .data-card { background: #1a1a1a; padding: 15px; border-radius: 12px; text-align: center; border: 1px solid #00FF00; box-shadow: 0 0 8px rgba(0, 255, 0, 0.15); }
+    .data-card { background: #1a1a1a; padding: 15px; border-radius: 12px; text-align: center; border: 1px solid #00FF00; box-shadow: 0 0 10px rgba(0, 255, 0, 0.2); }
     .data-label { font-size: 12px; color: #888; margin-bottom: 4px; }
     .data-value { font-size: 22px; font-weight: bold; color: #fff; }
 
-    .canvas-container { position: relative; width: 92%; max-width: 640px; border-radius: 15px; overflow: hidden; border: 1px solid #333; background: #000; aspect-ratio: 3/4; }
-    canvas { width: 100%; height: 100%; object-fit: cover; }
+    .canvas-container { position: relative; width: 92%; max-width: 640px; border-radius: 15px; overflow: hidden; border: 1px solid #333; background: #000; aspect-ratio: 9/16; }
+    canvas { width: 100%; height: 100%; object-fit: contain; }
     video { display: none; }
 
     #analysis-overlay {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(0,0,0,0.85); display: none; flex-direction: column;
+      background: rgba(0,0,0,0.9); display: none; flex-direction: column;
       justify-content: center; align-items: center; z-index: 100;
     }
-    .progress-track { width: 70%; height: 6px; background: #333; border-radius: 3px; margin-top: 15px; overflow: hidden; }
-    #progress-fill { width: 0%; height: 100%; background: #00FF00; box-shadow: 0 0 10px #00FF00; transition: width 0.1s; }
+    .progress-track { width: 70%; height: 8px; background: #333; border-radius: 4px; margin-top: 15px; overflow: hidden; border: 1px solid #444; }
+    #progress-fill { width: 0%; height: 100%; background: #00FF00; box-shadow: 0 0 15px #00FF00; transition: width 0.1s; }
   </style>
 </head>
 <body>
@@ -37,7 +37,7 @@
     <button class="btn" onclick="toggleCamera()">🔄 切換鏡頭</button>
     <label class="btn" for="upload-input">📁 上傳分析影片</label>
     <input type="file" id="upload-input" accept="video/*" onchange="handleFileUpload(event)">
-    <button class="btn" onclick="location.reload()"><span style="color:#ff4444">●</span> 即時模式</button>
+    <button class="btn" onclick="resetToLive()"><span style="color:#ff4444">●</span> 即時模式</button>
   </div>
   
   <div class="dashboard">
@@ -49,11 +49,12 @@
 
   <div class="canvas-container">
     <div id="analysis-overlay">
-      <div style="color:#00FF00; font-weight:bold;">🔍 AI 深度分析中...</div>
+      <div style="color:#00FF00; font-weight:bold; font-size: 18px;">🔍 AI 影片深度分析中...</div>
       <div class="progress-track"><div id="progress-fill"></div></div>
-      <div id="percent-text" style="margin-top:8px; color:#00FF00; font-size:14px;">0%</div>
+      <div id="percent-text" style="margin-top:10px; color:#00FF00; font-family: monospace; font-size: 20px;">0%</div>
+      <div style="margin-top:5px; color:#666; font-size: 11px;">請稍候，正在逐幀提取動作數據</div>
     </div>
-    <video id="input_video" playsinline muted></video>
+    <video id="input_video" playsinline muted crossorigin="anonymous"></video>
     <canvas id="output_canvas"></canvas>
   </div>
 
@@ -67,20 +68,122 @@
 
     let camera = null;
     let isAnalyzing = false;
-    let currentFacingMode = "environment";
     let lastPoseResults = null;
+    let currentFacingMode = "environment"; 
 
-    // --- 1. Pose 模型初始化 ---
+    // --- 1. Pose 模型配置 ---
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
-    pose.setOptions({ modelComplexity: 0, smoothLandmarks: true });
+
+    pose.setOptions({
+      modelComplexity: 1, 
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    
     pose.onResults((results) => {
       lastPoseResults = results;
-      if (results.poseLandmarks) updateMetrics(results.poseLandmarks);
+      if (results.poseLandmarks) {
+        updateMetrics(results.poseLandmarks);
+      }
     });
 
-    // --- 2. 角度計算邏輯 ---
+    // --- 2. 鏡頭控制 ---
+    async function startApp() {
+      if (camera) {
+        await camera.stop();
+      }
+      camera = new Camera(videoElement, {
+        onFrame: async () => {
+          // 只有在非分析影片狀態下才透過 Camera 傳送偵測
+          if (!isAnalyzing && videoElement.srcObject) {
+            await pose.send({ image: videoElement });
+          }
+        },
+        facingMode: currentFacingMode,
+        width: 640, height: 480
+      });
+      camera.start();
+    }
+
+    async function toggleCamera() {
+      currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+      // 清除影片路徑以便重新切換回鏡頭串流
+      videoElement.src = "";
+      videoElement.srcObject = null;
+      await startApp();
+    }
+
+    function resetToLive() {
+      location.reload(); // 最徹底的即時模式重設
+    }
+
+    // --- 3. 影片上傳與深度分析邏輯 ---
+    async function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      // 1. 停止鏡頭
+      if (camera) { 
+        await camera.stop(); 
+        camera = null; 
+      }
+
+      isAnalyzing = true;
+      overlay.style.display = 'flex';
+      
+      const url = URL.createObjectURL(file);
+      videoElement.srcObject = null;
+      videoElement.src = url;
+      videoElement.load();
+
+      // 等待載入
+      await new Promise(r => videoElement.onloadeddata = r);
+      
+      const duration = videoElement.duration;
+      const step = 0.2; // 每 0.2 秒取一幀進行 AI 分析
+
+      for (let t = 0; t <= duration; t += step) {
+        videoElement.currentTime = t;
+        
+        // 【核心修正】精確等待影片 Seek 完成
+        await new Promise(resolve => {
+          const onSeeked = () => {
+            videoElement.removeEventListener('seeked', onSeeked);
+            resolve();
+          };
+          videoElement.addEventListener('seeked', onSeeked);
+        });
+
+        // 【核心修正】等待 AI 處理完這一幀才繼續循環
+        await pose.send({ image: videoElement });
+        
+        const p = (t / duration) * 100;
+        progressFill.style.width = p + "%";
+        percentText.innerText = Math.round(p) + "%";
+      }
+
+      // 分析結束
+      isAnalyzing = false;
+      overlay.style.display = 'none';
+      videoElement.currentTime = 0;
+      videoElement.play();
+      
+      // 進入播放處理循環
+      playLoop();
+    }
+
+    // 影片播放時的偵測循環
+    async function playLoop() {
+      if (!isAnalyzing && !videoElement.paused && !videoElement.ended && !videoElement.srcObject) {
+        await pose.send({ image: videoElement });
+      }
+      requestAnimationFrame(playLoop);
+    }
+
+    // --- 4. 運算與繪圖邏輯 ---
     function getAngle(p1, p2, p3) {
       if(!p1 || !p2 || !p3) return 0;
       const rad = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
@@ -89,81 +192,40 @@
     }
 
     function updateMetrics(lm) {
+      // 判定持弓手（以手肘位置較高者為後手肘）
       const isRight = lm[14].y < lm[13].y;
       document.getElementById('elbow-val').innerText = getAngle(lm[isRight?12:11], lm[isRight?14:13], lm[isRight?16:15]) + "°";
+      
       const sMid = { x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2 };
       const hMid = { x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2 };
       document.getElementById('torso-val').innerText = getAngle({x:sMid.x, y:0}, sMid, hMid) + "°";
+      
       document.getElementById('lknee-val').innerText = getAngle(lm[23], lm[25], lm[27]) + "°";
       document.getElementById('rknee-val').innerText = getAngle(lm[24], lm[26], lm[28]) + "°";
     }
 
-    // --- 3. 繪圖循環 (解決黑屏關鍵) ---
+    // 畫布渲染循環
     function mainLoop() {
       if (videoElement.readyState >= 2) {
         canvasElement.width = videoElement.videoWidth;
         canvasElement.height = videoElement.videoHeight;
+        
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+        
         if (lastPoseResults && lastPoseResults.poseLandmarks) {
           drawConnectors(canvasCtx, lastPoseResults.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
           drawLandmarks(canvasCtx, lastPoseResults.poseLandmarks, {color: '#FFFFFF', radius: 1});
         }
         canvasCtx.restore();
-        if (!isAnalyzing) pose.send({ image: videoElement });
       }
       requestAnimationFrame(mainLoop);
     }
 
-    // --- 4. 影片上傳與預分析 ---
-    async function handleFileUpload(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-      if (camera) { await camera.stop(); camera = null; }
-
-      isAnalyzing = true;
-      overlay.style.display = 'flex';
-      videoElement.src = URL.createObjectURL(file);
-      
-      videoElement.onloadedmetadata = async () => {
-        const duration = videoElement.duration;
-        for (let t = 0; t <= duration; t += 0.3) {
-          videoElement.currentTime = t;
-          await new Promise(r => videoElement.onseeked = r);
-          await pose.send({ image: videoElement });
-          
-          const p = (t / duration) * 100;
-          progressFill.style.width = p + "%";
-          percentText.innerText = Math.round(p) + "%";
-        }
-        isAnalyzing = false;
-        overlay.style.display = 'none';
-        videoElement.play();
-      };
-    }
-
-    // --- 5. 相機啟動 ---
-    async function startCamera() {
-      try {
-        camera = new Camera(videoElement, {
-          onFrame: async () => {}, // 統一由 mainLoop 處理
-          facingMode: currentFacingMode,
-          width: 640, height: 480
-        });
-        await camera.start();
-      } catch (e) {
-        alert("無法開啟相機，請檢查權限設定");
-      }
-    }
-
-    function toggleCamera() {
-      currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
-      if (camera) location.reload(); // 手機端重整最穩定
-    }
-
+    // --- 5. 啟動 ---
     window.onload = () => {
-      startCamera();
+      startApp();
       mainLoop();
     };
   </script>
