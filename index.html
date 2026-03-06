@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 穩定強化版</title>
+  <title>射箭 Pro AI - 資源隔離旗艦版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -23,9 +23,10 @@
     .mini-card { background: #000; padding: 5px; border-radius: 5px; text-align: center; border: 1px solid #444; }
     .mini-label { font-size: 10px; color: #888; }
     .mini-val { font-size: 14px; color: #00FF00; font-weight: bold; }
-    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
-    .bar-bg { width: 60%; height: 8px; background: #333; border-radius: 4px; margin-top: 10px; overflow: hidden; }
+    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; border-radius: 8px; }
+    .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
     .bar-fill { width: 0%; height: 100%; background: #00FF00; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -43,7 +44,8 @@
   <div class="comparison-container">
     <div class="video-slot" id="slot-A">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">解碼 A 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <video id="video-live" playsinline muted></video>
         <video id="video-A" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-A"></canvas>
       </div>
@@ -60,7 +62,7 @@
 
     <div class="video-slot hidden" id="slot-B">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">解碼 B 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
+        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
         <video id="video-B" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-B"></canvas>
       </div>
@@ -81,6 +83,7 @@
       A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null },
       B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null }
     };
+    const vLive = document.getElementById('video-live');
 
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
@@ -126,14 +129,14 @@
     }
 
     async function handleFile(e, id) {
-      // 核心修正：上傳 A 時徹底重置 B，避免解碼器衝突
-      if (id === 'A') {
-          slots.B.vid.pause();
-          slots.B.vid.src = "";
-          slots.B.vid.load();
+      // 核心隔離：上傳任何影片前，強制清空鏡頭資源
+      if (isLive) {
+          isLive = false;
+          if(camera) { await camera.stop(); camera = null; }
+          vLive.srcObject = null;
+          vLive.load();
       }
-      if (isLive) { isLive = false; if(camera) { await camera.stop(); camera = null; } }
-      
+
       const file = e.target.files[0];
       if (!file) return;
       const s = slots[id];
@@ -157,14 +160,15 @@
     }
 
     async function activateLiveMode() {
-      slots.A.vid.pause(); slots.A.vid.src = "";
+      // 鏡頭啟動前，清空影片 A 以釋放解碼器
+      slots.A.vid.src = ""; slots.A.vid.load();
       isLive = true;
       if (camera) await camera.stop();
-      camera = new Camera(slots.A.vid, {
+      camera = new Camera(vLive, {
         onFrame: async () => {
-          if (isLive && !aiBusy) { aiBusy = true; currentId = 'A'; await pose.send({ image: slots.A.vid }); }
+          if (isLive && !aiBusy) { aiBusy = true; currentId = 'A'; await pose.send({ image: vLive }); }
         },
-        facingMode: facing, width: 640, height: 480
+        facingMode: facing, width: 960, height: 540
       });
       camera.start();
     }
@@ -176,7 +180,7 @@
         if (res) {
             const isR = res[14].y < res[13].y;
             slots[id].baseline = { elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]), fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24]) };
-            alert("基準鎖定成功");
+            alert("基準點已鎖定");
         }
     }
 
@@ -188,12 +192,14 @@
     function draw() {
       ['A', 'B'].forEach(id => {
         const s = slots[id];
-        if (s.vid.readyState >= 2) {
-          s.cvs.width = s.vid.videoWidth; s.cvs.height = s.vid.videoHeight;
-          s.ctx.drawImage(s.vid, 0, 0);
-          if (!s.vid.paused && s.vid.duration) {
-            s.prog.value = (s.vid.currentTime / s.vid.duration) * 100;
-            if (!aiBusy && Math.floor(s.vid.currentTime*10)%3 === 0) { aiBusy = true; currentId = id; pose.send({image: s.vid}); }
+        // 渲染時判定來源：A 即時用 vLive，其餘用 vid
+        const src = (id === 'A' && isLive) ? vLive : s.vid;
+        if (src.readyState >= 2) {
+          s.cvs.width = src.videoWidth; s.cvs.height = src.videoHeight;
+          s.ctx.drawImage(src, 0, 0);
+          if (!src.paused && src.duration) {
+            s.prog.value = (src.currentTime / src.duration) * 100;
+            if (!aiBusy) { aiBusy = true; currentId = id; pose.send({image: src}); }
           }
           if (s.lastRes?.poseLandmarks) {
             drawConnectors(s.ctx, s.lastRes.poseLandmarks, POSE_CONNECTIONS, {color:'#00FF00', lineWidth:2});
