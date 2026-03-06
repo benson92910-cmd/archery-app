@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭 Pro AI - 雙軌旗艦版</title>
+  <title>射箭 Pro AI - 自動放箭偵測版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
@@ -14,7 +14,7 @@
     .btn-danger { border-color: #ff4444; color: #ff4444; }
     .btn-snap { background: #00FF00; color: #000; grid-column: span 2; margin-top: 5px; border: none; font-weight: bold; }
     .comparison-container { display: flex; gap: 10px; width: 95%; max-width: 1200px; margin-top: 15px; flex-wrap: wrap; justify-content: center; }
-    .video-slot { flex: 1; min-width: 300px; max-width: 400px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; }
+    .video-slot { flex: 1; min-width: 300px; max-width: 500px; background: #1a1a1a; border-radius: 12px; padding: 10px; border: 1px solid #333; position: relative; transition: outline 0.2s; }
     .canvas-box { position: relative; width: 100%; aspect-ratio: 9/16; background: #000; border-radius: 8px; overflow: hidden; }
     canvas { width: 100%; height: 100%; object-fit: contain; position: relative; z-index: 5; }
     video { display: none; }
@@ -26,6 +26,7 @@
     .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 10; border-radius: 8px; }
     .bar-bg { width: 60%; height: 6px; background: #333; border-radius: 3px; margin-top: 10px; overflow: hidden; }
     .bar-fill { width: 0%; height: 100%; background: #00FF00; }
+    .release-active { outline: 6px solid #ff4444 !important; }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -44,57 +45,60 @@
   <div class="comparison-container">
     <div class="video-slot" id="slot-A">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">分析 A 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
+        <div class="overlay" id="overlay-A"><div id="msg-A" style="color:#00FF00">分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-A"></div></div></div>
         <video id="video-live" playsinline muted></video>
         <video id="video-A" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-A"></canvas>
       </div>
       <input type="range" class="custom-progress hidden" id="progress-A" min="0" max="100" value="0" oninput="manualSeek('A')">
       <div class="slot-dash">
-        <div class="mini-card"><div class="mini-label">後肘</div><div id="elbow-A" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-A" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-A" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-A" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 2;"><div class="mini-label">穩定度 (Δ)</div><div id="drift-A" class="mini-val">--°</div></div>
-        <button class="btn btn-snap" onclick="resetBaseline('A')">🎯 鎖定 A 基準</button>
+        <div class="mini-card" style="grid-column: span 2; border: 1px solid #ff4444; background: #2a0000;">
+          <div class="mini-label" style="color:#ff4444">🎬 最後放箭瞬間數據</div>
+          <div id="release-A" class="mini-val" style="color:white; font-size:12px;">等待動作偵測...</div>
+        </div>
+        <button class="btn btn-snap" onclick="resetBaseline('A')">🎯 鎖定基準 (監控穩定度)</button>
       </div>
     </div>
 
     <div class="video-slot hidden" id="slot-B">
       <div class="canvas-box">
-        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">分析 B 中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
+        <div class="overlay" id="overlay-B"><div id="msg-B" style="color:#00FF00">分析中...</div><div class="bar-bg"><div class="bar-fill" id="fill-B"></div></div></div>
         <video id="video-B" playsinline muted crossorigin="anonymous"></video>
         <canvas id="canvas-B"></canvas>
       </div>
       <input type="range" class="custom-progress" id="progress-B" min="0" max="100" value="0" oninput="manualSeek('B')">
       <div class="slot-dash">
-        <div class="mini-card"><div class="mini-label">後肘</div><div id="elbow-B" class="mini-val">--°</div></div>
+        <div class="mini-card"><div class="mini-label">後手肘</div><div id="elbow-B" class="mini-val">--°</div></div>
         <div class="mini-card"><div class="mini-label">前肩</div><div id="f-shoulder-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">後肩</div><div id="b-shoulder-B" class="mini-val">--°</div></div>
-        <div class="mini-card"><div class="mini-label">軀幹</div><div id="torso-B" class="mini-val">--°</div></div>
-        <div class="mini-card" style="grid-column: span 2;"><div class="mini-label">穩定度 (Δ)</div><div id="drift-B" class="mini-val">--°</div></div>
-        <button class="btn btn-snap" onclick="resetBaseline('B')">🎯 鎖定 B 基準</button>
+        <div class="mini-card" style="grid-column: span 2; border: 1px solid #ff4444; background: #2a0000;">
+            <div class="mini-label" style="color:#ff4444">🎬 最後放箭瞬間數據</div>
+            <div id="release-B" class="mini-val" style="color:white; font-size:12px;">等待動作偵測...</div>
+        </div>
+        <button class="btn btn-snap" onclick="resetBaseline('B')">🎯 鎖定基準 (監控穩定度)</button>
       </div>
     </div>
   </div>
 
   <script>
     const slots = {
-      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null },
-      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null }
+      A: { vid: document.getElementById('video-A'), cvs: document.getElementById('canvas-A'), ctx: document.getElementById('canvas-A').getContext('2d'), ovl: document.getElementById('overlay-A'), fill: document.getElementById('fill-A'), prog: document.getElementById('progress-A'), lastRes: null, baseline: null, lastElbow: 0, isLock: false },
+      B: { vid: document.getElementById('video-B'), cvs: document.getElementById('canvas-B'), ctx: document.getElementById('canvas-B').getContext('2d'), ovl: document.getElementById('overlay-B'), fill: document.getElementById('fill-B'), prog: document.getElementById('progress-B'), lastRes: null, baseline: null, lastElbow: 0, isLock: false }
     };
     const vLive = document.getElementById('video-live');
     const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
     let camera = null, isLive = false, aiBusy = false, currentId = null, facing = "environment";
+    const RELEASE_THRESHOLD = 18; // 放箭判定閾值 (角度變化的靈敏度)
 
     pose.onResults((res) => {
       if (currentId && slots[currentId]) {
         slots[currentId].lastRes = res;
-        updateUI(currentId, res.poseLandmarks);
+        processArcheryLogic(currentId, res.poseLandmarks);
       }
-      aiBusy = false; // 分析完成釋放鎖定
+      aiBusy = false;
     });
 
     function getAng(p1, p2, p3) {
@@ -104,27 +108,59 @@
       return Math.round(a > 180 ? 360 - a : a);
     }
 
-    function updateUI(id, lm) {
+    function processArcheryLogic(id, lm) {
       if (!lm) return;
       const isR = lm[14].y < lm[13].y;
       const dS = isR?12:11, dE = isR?14:13, dW = isR?16:15;
       const pS = isR?11:12, pE = isR?13:14, pH = isR?23:24;
-      const m = {
-        elb: getAng(lm[dS], lm[dE], lm[dW]),
-        fSh: getAng(lm[pE], lm[pS], lm[pH]),
-        bSh: getAng(lm[dE], lm[dS], lm[isR?24:23]),
-        tor: getAng({x:(lm[11].x+lm[12].x)/2, y:0}, {x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2}, {x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2})
-      };
-      document.getElementById(`elbow-${id}`).innerText = m.elb + "°";
-      document.getElementById(`f-shoulder-${id}`).innerText = m.fSh + "°";
-      document.getElementById(`b-shoulder-${id}`).innerText = m.bSh + "°";
-      document.getElementById(`torso-${id}`).innerText = m.tor + "°";
-      if (slots[id].baseline) {
-        const drift = Math.abs(m.elb - slots[id].baseline.elb) + Math.abs(m.fSh - slots[id].baseline.fSh);
-        const el = document.getElementById(`drift-${id}`);
-        el.innerText = drift + "°";
-        el.style.color = drift > 5 ? "#ff4444" : "#00FF00";
+      
+      const elbow = getAng(lm[dS], lm[dE], lm[dW]);
+      const fSh = getAng(lm[pE], lm[pS], lm[pH]);
+      const bSh = getAng(lm[dE], lm[dS], lm[isR?24:23]);
+      const torso = getAng({x:(lm[11].x+lm[12].x)/2, y:0}, {x:(lm[11].x+lm[12].x)/2, y:(lm[11].y+lm[12].y)/2}, {x:(lm[23].x+lm[24].x)/2, y:(lm[23].y+lm[24].y)/2});
+
+      // 更新即時儀表
+      document.getElementById(`elbow-${id}`).innerText = elbow + "°";
+      document.getElementById(`f-shoulder-${id}`).innerText = fSh + "°";
+      document.getElementById(`b-shoulder-${id}`).innerText = bSh + "°";
+      document.getElementById(`torso-${id}`).innerText = torso + "°";
+
+      // --- 自動放箭偵測核心邏輯 ---
+      if (slots[id].lastElbow !== 0 && !slots[id].isLock) {
+          const delta = Math.abs(elbow - slots[id].lastElbow);
+          if (delta > RELEASE_THRESHOLD) {
+              triggerRelease(id, elbow, fSh);
+          }
       }
+      slots[id].lastElbow = elbow;
+
+      // 穩定度監控
+      if (slots[id].baseline) {
+        const drift = Math.abs(elbow - slots[id].baseline.elb) + Math.abs(fSh - slots[id].baseline.fSh);
+        const el = document.getElementById(`drift-${id}`);
+        if(el) {
+            el.innerText = drift + "°";
+            el.style.color = drift > 5 ? "#ff4444" : "#00FF00";
+        }
+      }
+    }
+
+    function triggerRelease(id, elbow, fSh) {
+        slots[id].isLock = true; // 鎖定防止重複觸發
+        const slotEl = document.getElementById(`slot-${id}`);
+        const logEl = document.getElementById(`release-${id}`);
+        
+        // 視覺回饋：紅框閃爍
+        slotEl.classList.add('release-active');
+        logEl.innerText = `偵測到放箭！肘:${elbow}° 肩:${fSh}°`;
+        logEl.style.color = "#FFCC00";
+
+        console.log(`[AI] Slot ${id} 放箭偵測完成`);
+
+        setTimeout(() => {
+            slotEl.classList.remove('release-active');
+            slots[id].isLock = false; // 2.5秒後解除鎖定，準備下一次放箭偵測
+        }, 2500);
     }
 
     async function handleFile(e, id) {
@@ -137,7 +173,7 @@
       s.vid.src = URL.createObjectURL(file);
       await s.vid.load();
       const dur = s.vid.duration;
-      for (let t = 0; t <= dur; t += 0.5) {
+      for (let t = 0; t <= dur; t += 0.4) {
         s.vid.currentTime = t;
         await new Promise(r => s.vid.onseeked = r);
         currentId = id; aiBusy = true;
@@ -168,7 +204,7 @@
         if (res) {
             const isR = res[14].y < res[13].y;
             slots[id].baseline = { elb: getAng(res[isR?12:11], res[isR?14:13], res[isR?16:15]), fSh: getAng(res[isR?13:14], res[isR?11:12], res[isR?23:24]) };
-            alert("基準鎖定成功");
+            alert("基準點鎖定！開始計算穩定度。");
         }
     }
 
@@ -186,7 +222,6 @@
           s.ctx.drawImage(src, 0, 0);
           if (!src.paused && src.duration) {
             s.prog.value = (src.currentTime / src.duration) * 100;
-            // 重要：修正 B 影片播放時的 AI 指派邏輯
             if (!aiBusy) { aiBusy = true; currentId = id; pose.send({image: src}); }
           }
           if (s.lastRes?.poseLandmarks) {
