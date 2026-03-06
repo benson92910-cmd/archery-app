@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>射箭全方位分析 Pro - 穩定版</title>
+  <title>射箭 Pro 分析儀 - 加速穩定版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <style>
     body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-    .controls { display: flex; gap: 8px; padding: 10px; flex-wrap: wrap; justify-content: center; background: #222; width: 100%; position: sticky; top: 0; z-index: 10; }
+    .controls { display: flex; gap: 8px; padding: 10px; flex-wrap: wrap; justify-content: center; background: #222; width: 100%; position: sticky; top: 0; z-index: 10; border-bottom: 1px solid #444; }
     button, label { background: #444; color: white; padding: 10px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: bold; }
     button:active { background: #666; }
     .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 95%; max-width: 600px; margin: 10px 0; }
@@ -20,7 +20,7 @@
     canvas { width: 100%; border-radius: 10px; border: 1px solid #444; background: #000; }
     video { display: none; }
     #upload-input { display: none; }
-    .loading-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); padding: 10px; border-radius: 5px; display: none; }
+    .loading-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; display: none; z-index: 5; text-align: center; border: 1px solid #00FF00; }
   </style>
 </head>
 <body>
@@ -28,18 +28,20 @@
     <button onclick="switchCamera()">🔄 切換鏡頭</button>
     <label for="upload-input">📁 上傳影片</label>
     <input type="file" id="upload-input" accept="video/*" onchange="loadVideo(event)">
-    <button onclick="location.reload()">🔴 重置/即時相機</button>
+    <button onclick="location.reload()">🔴 即時模式</button>
   </div>
   
   <div class="dashboard">
     <div class="data-card"><div class="data-label">後手肘角度</div><div id="elbow-val" class="data-value">--°</div></div>
     <div class="data-card"><div class="data-label">軀幹垂直度</div><div id="torso-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">左膝角度</div><div id="lknee-val" class="data-value">--°</div></div>
+    <div class="data-card"><div class="data-label">右膝角度</div><div id="rknee-val" class="data-value">--°</div></div>
   </div>
 
   <div class="canvas-container">
     <video class="input_video" playsinline muted></video>
     <canvas class="output_canvas"></canvas>
-    <div id="loading" class="loading-overlay">分析中...</div>
+    <div id="loading" class="loading-overlay">⚙️ AI 高速分析中...<br><small style="font-size: 10px; color: #aaa;">請稍候數秒</small></div>
   </div>
 
   <script>
@@ -51,6 +53,7 @@
     let camera = null;
     let currentFacingMode = "environment";
     let isVideoMode = false;
+    let frameCount = 0;
 
     // 1. 角度計算工具
     function calculateAngle(a, b, c) {
@@ -61,13 +64,13 @@
       return angle;
     }
 
-    // 2. 初始化 MediaPipe Pose
+    // 2. 初始化 MediaPipe (使用極速版模型)
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
 
     pose.setOptions({
-      modelComplexity: 1, // 手機建議設為 1，兼顧速度與準度
+      modelComplexity: 0,    // ⚡ 改為 0：極速模式，適合手機
       smoothLandmarks: true,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5
@@ -84,34 +87,47 @@
       if (results.poseLandmarks) {
         const lm = results.poseLandmarks;
         
-        // 分析邏輯：後手肘 (12, 14, 16) 與 軀幹 (肩中點/髖中點)
+        // --- 顯示角度數據 ---
+        // 後手肘 (右撇子以 12, 14, 16 為主)
         const elbow = calculateAngle(lm[12], lm[14], lm[16]);
         document.getElementById('elbow-val').innerText = Math.round(elbow) + "°";
 
+        // 軀幹 (肩膀中心到髖部中心)
         const sMid = { x: (lm[11].x + lm[12].x)/2, y: (lm[11].y + lm[12].y)/2 };
         const hMid = { x: (lm[23].x + lm[24].x)/2, y: (lm[23].y + lm[24].y)/2 };
         const torso = calculateAngle(sMid, hMid, {x: hMid.x, y: 0});
         document.getElementById('torso-val').innerText = Math.round(torso) + "°";
 
+        // 雙膝
+        document.getElementById('lknee-val').innerText = Math.round(calculateAngle(lm[23], lm[25], lm[27])) + "°";
+        document.getElementById('rknee-val').innerText = Math.round(calculateAngle(lm[24], lm[26], lm[28])) + "°";
+
+        // --- 繪製線條 ---
         drawConnectors(canvasCtx, lm, POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
-        drawLandmarks(canvasCtx, lm, {color: '#00FF00', lineWidth: 1, radius: 3});
+        drawLandmarks(canvasCtx, lm, {color: '#00FF00', lineWidth: 1, radius: 2});
       }
       canvasCtx.restore();
     });
 
-    // 3. 穩定的影格處理函式 (解決卡頓關鍵)
+    // 3. 異步影格處理 (包含跳幀邏輯)
     async function processFrame() {
       if (videoElement.paused || videoElement.ended) {
         isVideoMode = false;
         return;
       }
-      // 等待 MediaPipe 處理完這一幀
-      await pose.send({ image: videoElement });
-      // 請求下一幀處理
-      requestAnimationFrame(processFrame);
+
+      frameCount++;
+      // 每 3 幀才分析一次，減輕手機負擔
+      if (frameCount % 3 === 0) {
+        await pose.send({ image: videoElement });
+      }
+
+      if (isVideoMode) {
+        requestAnimationFrame(processFrame);
+      }
     }
 
-    // 4. 相機控制
+    // 4. 控制邏輯
     function startCamera() {
       isVideoMode = false;
       if (camera) camera.stop();
@@ -130,7 +146,6 @@
       startCamera();
     }
 
-    // 5. 影片上傳處理
     async function loadVideo(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -143,13 +158,12 @@
       videoElement.src = url;
       
       videoElement.onloadeddata = () => {
-        loadingDiv.style.display = "none";
+        setTimeout(() => { loadingDiv.style.display = "none"; }, 800);
         videoElement.play();
-        processFrame(); // 開始手動遞迴處理
+        processFrame();
       };
     }
 
-    // 初始啟動
     startCamera();
   </script>
 </body>
